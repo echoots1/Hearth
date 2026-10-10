@@ -1,7 +1,11 @@
 # Hearth — Open Questions
 
 Questions that would change the data model or the money math. Each has a
-proposed default so work can continue; the default stands until answered.
+proposed default so work can continue.
+
+**Status (2026-10-10):** all proposed defaults below were accepted at the
+design review. They are now the decisions; the alternatives stay listed so
+the reasoning isn't lost. New questions go at the end with the same format.
 
 ## Q1. Category rollover
 
@@ -117,7 +121,6 @@ assign by statement period or shift late-month purchases forward.
 
 ## Q12. Money column width
 
-`integer` cents caps at about ±$21.4M per value.
-
-- **Proposed default:** keep `integer`. Switching to `bigint` is a single
-  migration if a household ever needs it.
+- **Decided:** `bigint` cents, mapping directly to Rust `i64`. (The original
+  proposal was `integer`; switching to a Rust backend made `bigint` the
+  natural choice, and the cost is nil.)

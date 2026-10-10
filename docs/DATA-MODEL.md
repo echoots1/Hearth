@@ -1,21 +1,23 @@
 # Hearth — Data Model
 
-PostgreSQL 16, managed by Drizzle ORM with SQL migrations in `drizzle/`.
-This document is the source of truth for the schema; the Drizzle schema in
-`src/db/schema/*.ts` must match it, and a change here is a migration.
+PostgreSQL 16, managed by sqlx with SQL migrations in
+`crates/hearth-server/migrations/` (embedded in the binary and run at
+startup). This document is the source of truth for the schema; the Rust row
+types in `crates/hearth-server/src/db/` must match it, and a change here is a
+migration.
 
 Conventions (see ARCHITECTURE §5):
 
 - Primary keys are `id uuid default gen_random_uuid()`.
-- Money columns end in `_cents` and are `integer` (±$21M is plenty for a
-  household; JavaScript numbers stay exact). Never `numeric`, never `float`.
+- Money columns end in `_cents` and are `bigint`, mapping directly to the
+  Rust `Cents(i64)` newtype. Never `numeric`, never `float`.
 - Signed amounts: negative = out, positive = in.
 - Calendar dates are `date` columns (`YYYY-MM-DD` strings at the boundary),
   in the household timezone. Months are `char(7)` `YYYY-MM` columns named
   `*_month`. Instants are `timestamptz` columns named `*_at`.
 - Every table has `created_at timestamptz default now()`; mutable tables also
   have `updated_at` maintained by the service layer.
-- Enums are Postgres enums (listed in §2) so bad values can't be stored.
+- Enums are Postgres enums (listed in §2) so bad values can't be stored; each maps to a Rust enum with `#[sqlx(type_name = ...)]`.
 - Soft delete (`deleted_at`) only where history matters: transactions.
 - `household_id` appears on top-level tables so nothing is hard-coded, but
   v1 has exactly one household and no row-level isolation.
@@ -119,8 +121,8 @@ Index: `(user_id)`, `(expires_at)` for housekeeping.
 
 ### settings
 
-Key/value with a typed registry in code (`src/core/settings/registry.ts`,
-Zod-validated on read and write). One row per key per household.
+Key/value with a typed registry in code (`services/settings.rs`, serde
+structs validated on read and write). One row per key per household.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -162,9 +164,9 @@ Registered keys and defaults:
 | currency | char(3) | |
 | is_active | bool | archived accounts keep their transactions |
 | include_in_running_balance | bool | default true for checking/savings/cash, false otherwise |
-| reported_balance_cents | integer null | user-reported |
+| reported_balance_cents | bigint null | user-reported |
 | reported_balance_as_of | timestamptz null | |
-| bank_balance_cents | integer null | from Plaid, possibly stale |
+| bank_balance_cents | bigint null | from Plaid, possibly stale |
 | bank_balance_as_of | timestamptz null | |
 | created_at, updated_at | timestamptz | |
 
@@ -180,7 +182,7 @@ the 3rd" is answerable and the running estimate can be back-tested.
 | id | uuid pk | |
 | account_id | uuid fk (cascade) | |
 | kind | text check in (`reported`, `bank`) | |
-| balance_cents | integer | |
+| balance_cents | bigint | |
 | as_of | timestamptz | |
 | recorded_by | actor_kind + actor_id (see audit) | |
 | created_at | timestamptz | |
@@ -241,7 +243,7 @@ Unique: `(household_id, name)` where not archived.
 | id | uuid pk | |
 | category_id | uuid fk (cascade) | |
 | starts_month | char(7) | `YYYY-MM`; the phase applies from this month until the next phase |
-| amount_cents | integer | ≥ 0; the plan for a month, unsigned (sign comes from the category) |
+| amount_cents | bigint | ≥ 0; the plan for a month, unsigned (sign comes from the category) |
 | label | text null | "after move", "new mortgage" |
 | note | text null | |
 | created_at, updated_at | timestamptz | |
@@ -259,7 +261,7 @@ Effective plan for month `M` = row with max `starts_month <= M`; none → 0.
 | date | date | posting date (or authorized date while pending), household TZ |
 | description | text | cleaned/display name; editable |
 | original_description | text | as received; never edited |
-| amount_cents | integer | signed |
+| amount_cents | bigint | signed |
 | category_id | uuid fk null → categories | |
 | source | transaction_source | |
 | external_id | text null | Plaid `transaction_id`, Privacy transaction token |
@@ -299,8 +301,8 @@ uses a stable token per transaction and just changes status.
 | match_type | rule_match_type | |
 | pattern | text | `contains` is case-insensitive substring on normalized description; `regex` is JS regex with `i` flag, validated on save |
 | account_id | uuid fk null | restrict to one account |
-| amount_min_cents | integer null | on `abs(amount)` |
-| amount_max_cents | integer null | |
+| amount_min_cents | bigint null | on `abs(amount)` |
+| amount_max_cents | bigint null | |
 | action | rule_action default `categorize` | `flag_canceled` raises `canceled_service_charged`; `ignore` marks the row reviewed with no category (e.g. transfers) |
 | category_id | uuid fk null | required when action = categorize |
 | set_note | text null | appended to transaction note on match |
@@ -317,7 +319,7 @@ uses a stable token per transaction and just changes status.
 | household_id | uuid fk | |
 | date | date | expected date |
 | item | text | |
-| amount_cents | integer | unsigned expected spend |
+| amount_cents | bigint | unsigned expected spend |
 | category_id | uuid fk null | |
 | status | planned_status | |
 | decided_by | text | free text (a name, "both", "Claude") — not an fk so the AI can be recorded |
@@ -336,7 +338,7 @@ Index: `(household_id, status, date)`.
 | name | text | "Annual bills" |
 | account_id | uuid fk null | where the money sits, informational |
 | category_id | uuid fk null | the budget category the monthly set-aside is planned under |
-| funded_balance_cents | integer default 0 | user-reported |
+| funded_balance_cents | bigint default 0 | user-reported |
 | balance_as_of | timestamptz null | |
 | created_at, updated_at | timestamptz | |
 
@@ -347,7 +349,7 @@ Index: `(household_id, status, date)`.
 | id | uuid pk | |
 | fund_id | uuid fk (cascade) | |
 | name | text | "Car registration" |
-| amount_cents | integer | |
+| amount_cents | bigint | |
 | due_month | char(7) | next due month; advanced by `cycle_months` when a matching transaction posts or by hand |
 | cycle_months | smallint null | 12, 6, 3, 1; null = one-off |
 | category_id | uuid fk null | where the bill posts |
@@ -362,11 +364,11 @@ Index: `(household_id, status, date)`.
 | household_id | uuid fk | |
 | name | text | |
 | kind | debt_kind | |
-| balance_cents | integer | current balance (positive = owed) |
+| balance_cents | bigint | current balance (positive = owed) |
 | balance_as_of | timestamptz | |
 | apr_bps | integer | 24.99% → 2499 |
-| min_payment_cents | integer | |
-| planned_payment_cents | integer null | what the plan actually pays; defaults to min |
+| min_payment_cents | bigint | |
+| planned_payment_cents | bigint null | what the plan actually pays; defaults to min |
 | due_day | smallint (1–31) | |
 | account_id | uuid fk null | linked Plaid account; enables `debt_redraw` and auto balance updates |
 | custom_order | integer null | for `debt_strategy.kind = custom` |
@@ -388,7 +390,7 @@ Debt balances also get `balance_snapshots`-style history: for simplicity the
 | severity | alert_severity | |
 | title | text | one line, used as the notification title |
 | detail | text | human-readable explanation with numbers |
-| amount_cents | integer null | the amount in question |
+| amount_cents | bigint null | the amount in question |
 | source | text | job name that raised it |
 | dedupe_key | text | see ARCHITECTURE §6.7 |
 | status | alert_status default `open` | |
@@ -464,7 +466,7 @@ movement, so not transactions.
 | account_id | uuid fk → accounts (the virtual card) | |
 | external_id | text unique | |
 | occurred_at | timestamptz | |
-| amount_cents | integer | unsigned attempted amount |
+| amount_cents | bigint | unsigned attempted amount |
 | descriptor | text | merchant string |
 | result | card_event_result | |
 | reason | text null | provider decline reason |
@@ -550,9 +552,9 @@ round, plausible, and unrelated to any real person.
 
 ## 6. Migration policy
 
-- Schema changes land as a new `drizzle/NNNN_*.sql` plus the matching
-  schema change, in the same commit, with the docs updated.
+- Schema changes land as a new `migrations/<timestamp>_<name>.sql` plus the
+  matching row-type change, in the same commit, with the docs updated.
 - Additive changes are preferred; destructive changes need a data migration
   in the same file and a note in the PR.
-- The app runs pending migrations on container start (`drizzle-kit migrate`)
-  before serving traffic.
+- The binary runs pending migrations on start (`sqlx::migrate!`) before
+  serving traffic.

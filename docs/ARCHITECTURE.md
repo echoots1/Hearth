@@ -27,19 +27,24 @@ other than a single household.
 
 ## 2. Stack
 
-| Concern | Choice | Why (briefly — decided, not to be revisited) |
+Decided (after review): **Rust backend, TypeScript UI**, one Docker image.
+This is final; the trade-offs were weighed once and are not revisited.
+
+| Concern | Choice | Why (briefly) |
 | --- | --- | --- |
-| Language | TypeScript everywhere | One language for UI, API, jobs, MCP, tests. |
-| Framework | **Next.js 15 (App Router)** | Mainstream full-stack: server components for the mobile UI, route handlers for the HTTP API and the MCP endpoint, `instrumentation.ts` to boot the scheduler in the same process, `output: "standalone"` for a small Docker image. |
-| ORM | **Drizzle ORM** + `drizzle-kit` migrations on **PostgreSQL 16** | SQL-first and fully typed; migrations are plain SQL files checked into the repo; no codegen daemon; integer-cents columns map directly to `integer`. |
-| UI | React, Tailwind CSS, shadcn/ui primitives | Mobile-first with minimal custom CSS. |
-| Validation | Zod | One schema per boundary (HTTP input, MCP tool input, settings JSON). Zod schemas double as the MCP tool `inputSchema`. |
-| Auth | Hand-rolled local auth (argon2id password hashes, DB-backed sessions, httpOnly cookie) | Small, auditable, no provider lock-in. OIDC later via `openid-client`. |
-| MCP | `@modelcontextprotocol/sdk`, Streamable HTTP transport, stateless, bearer API key | First-class connector for Claude; no stdio process to babysit. |
-| Jobs | In-process scheduler (`setInterval` + Postgres advisory locks + a `job_runs` table) | No external cron. Locks make it safe if two app containers ever run. |
-| Notifications | ntfy (HTTP) and SMTP (nodemailer) behind a `Notifier` interface | Pluggable; both optional. |
-| Tests | Vitest | Fast, TS-native. Money math is pure functions with table-driven tests. |
-| Packaging | Single Docker image + `docker-compose.yml` (app + Postgres) | Home-server friendly, runs behind any reverse proxy. |
+| Backend language | **Rust** (stable, 2024 edition) | Fast, small, single static binary; a home server runs it comfortably alongside everything else. Strong typing keeps money math honest. |
+| HTTP | **Axum** on **Tokio** | Mainstream async stack; serves the JSON API, the MCP endpoint, and the built UI from one process. |
+| Database | **PostgreSQL 16** via **sqlx** (runtime-checked queries, embedded SQL migrations) | Plain SQL in the repo, no ORM magic; migrations run at startup from the binary. |
+| MCP | **rmcp** (official Rust MCP SDK), Streamable HTTP transport mounted in Axum, bearer API key | First-class connector for Claude, no sidecar process. |
+| Plaid / Privacy.com | Hand-written **reqwest** clients with serde models (no official Rust SDKs) | Small, explicit surface: a handful of endpoints each. Each client is a trait so tests use a fake. |
+| Jobs | Tokio tasks on intervals + Postgres advisory locks + a `job_runs` table | No external cron; safe if two containers ever run. |
+| Notifications | ntfy (reqwest) and SMTP (**lettre**) behind a `Notifier` trait | Pluggable; both optional. |
+| Auth | argon2id password hashes, DB-backed sessions in an httpOnly cookie (tower-cookies); API keys hashed with SHA-256; AES-256-GCM for secrets at rest | Small and auditable. OIDC later. |
+| Validation | serde + validator on request bodies; `schemars` JSON Schemas for MCP tool inputs | One definition per boundary. |
+| Money / time | `i64` cents everywhere; `chrono` + `chrono-tz` for household-timezone dates | Never floats; a `Cents` newtype makes mixing units a compile error. |
+| UI | **Vite + React + TypeScript**, Tailwind CSS, TanStack Query | Mobile-first SPA built to static files and embedded into the binary with `rust-embed`, so the image is still one binary. |
+| Tests | `cargo test` for the pure core (no DB); `sqlx::test` integration tests against Postgres; Vitest + Playwright smoke for the UI | Money math first. |
+| Packaging | Multi-stage `Dockerfile` (node build → cargo build with `cargo-chef` layer caching → `debian:bookworm-slim` runtime) + `docker-compose.yml` (app + Postgres) | Home-server friendly, runs behind any reverse proxy. |
 
 Everything integration-specific (Plaid, Privacy.com, ntfy, SMTP, OIDC) is
 optional and enabled only when its env vars are present. `.env.example` lists
@@ -47,78 +52,89 @@ every setting with a comment; no secrets are committed.
 
 ## 3. Process model
 
-One container, one Node process, one port (`PORT`, default `3000`):
+One container, one Rust binary (`hearth`), one port (`PORT`, default `3000`):
 
 ```
-                 ┌──────────────────────── Hearth (Next.js standalone) ────────────────────────┐
-  browser ──────►│  App Router pages (RSC + client islands)      ──┐                             │
-  Claude (MCP) ─►│  /api/mcp  (Streamable HTTP, API-key bearer)   ├─► core services ─► Drizzle ─►│──► Postgres
-  ntfy/email ───►│  /api/alerts/:id/ack  (signed ack links)       │                             │
-                 │  /api/*   (JSON API used by the UI)          ──┘                             │
-                 │  scheduler (instrumentation.ts) ─► jobs ─────────► core services              │
-                 └────────────────────────────────────────────────────────────────────────────────┘
+                 ┌────────────────────────────── hearth (Axum on Tokio) ──────────────────────────────┐
+  browser ──────►│  /            embedded SPA (rust-embed)                                              │
+  browser ──────►│  /api/*       JSON API, session cookie                 ──┐                           │
+  Claude (MCP) ─►│  /mcp         Streamable HTTP (rmcp), bearer API key    ├─► core services ─► sqlx ──►│──► Postgres
+  ntfy/email ───►│  /api/alerts/:id/ack?token=…  signed ack links          │                           │
+                 │  scheduler (tokio tasks) ─► jobs ───────────────────────┘                           │
+                 └────────────────────────────────────────────────────────────────────────────────────┘
                             │                         │                       │
                             ▼                         ▼                       ▼
                         Plaid API               Privacy.com API        ntfy / SMTP
 ```
 
-- **Core services** (`src/core/*`) are plain TypeScript modules that take a
-  DB handle and return data. The UI, the JSON API, the MCP tools, and the
-  jobs all call the same services. Nothing in a route handler or a job
-  touches tables directly.
-- **The scheduler** starts from `instrumentation.ts` (Node runtime only,
-  guarded so it starts once). It can be disabled with `JOBS_ENABLED=false`,
-  which allows running a second container as a dedicated worker later
-  without any code change.
-- **Reverse proxy**: the app trusts `X-Forwarded-*` headers only when
+- **Core services** (`crates/hearth-server/src/services/*`) take a `PgPool`
+  (or a transaction) and return typed data. The JSON API handlers, the MCP
+  tools, and the jobs all call the same services. Nothing in a handler or a
+  job writes SQL directly.
+- **Pure math** lives in `crates/hearth-core` with no database or async
+  dependencies, so it is trivially unit-tested and reusable.
+- **The scheduler** is started from `main` after migrations; `JOBS_ENABLED=false`
+  turns it off so a second container can run as a dedicated worker later.
+- **Reverse proxy**: `X-Forwarded-*` headers are trusted only when
   `TRUST_PROXY=true`. Session cookies are `Secure` when `APP_URL` is https.
+- Startup order: parse env → connect pool → run migrations → seed settings
+  defaults → start scheduler → serve.
 
 ## 4. Repository layout
 
+Cargo workspace plus a `web/` package.
+
 ```
 .
-├── docs/                      ARCHITECTURE.md, DATA-MODEL.md, OPEN-QUESTIONS.md, MCP.md (tool docs)
-├── drizzle/                   SQL migrations (generated by drizzle-kit, committed)
-├── src/
-│   ├── app/                   Next.js App Router: pages + route handlers
-│   │   ├── (app)/             authenticated UI: budget, transactions, review, planned, sinking, debts, alerts, settings
-│   │   ├── (auth)/            login, first-run setup
-│   │   └── api/               JSON API, /api/mcp, /api/alerts/:id/ack, /api/plaid/*, /api/import/csv
-│   ├── core/                  domain services and pure money math (no Next.js imports)
-│   │   ├── money/             cents helpers, month keys, date helpers in household TZ
-│   │   ├── budget/            effective plan, rollups, category view
-│   │   ├── transactions/      create/update/categorize, dedup, review queue
-│   │   ├── rules/             rule matching
-│   │   ├── planned/           planned items + matching to transactions
-│   │   ├── sinking/           set-aside and "should have saved" math
-│   │   ├── debts/             interest/day, payoff projection, what-if
-│   │   ├── balance/           running estimate, projected low point, pay schedule
-│   │   ├── alerts/            alert evaluation, dedupe, lifecycle, nag schedule
-│   │   ├── questions/         pending questions for the AI
-│   │   └── audit/             audit log writer
-│   ├── db/                    Drizzle schema, client, seed
-│   ├── integrations/          plaid/, privacy/, csv/, notify/ (ntfy, smtp)
-│   ├── jobs/                  scheduler, lock, job definitions
-│   ├── mcp/                   server, tool registry, one file per tool group
-│   ├── auth/                  sessions, passwords, api keys, middleware
-│   └── lib/                   shared utilities (env parsing, logger)
-├── tests/                     vitest; money math first
+├── Cargo.toml                 workspace
+├── crates/
+│   ├── hearth-core/           pure domain types and money math (no DB, no async)
+│   │   └── src/
+│   │       ├── money.rs       Cents newtype, formatting, rounding rules
+│   │       ├── calendar.rs    household-TZ today, Month (YYYY-MM), pay schedules
+│   │       ├── budget.rs      effective plan, rollups, category view
+│   │       ├── balance.rs     running estimate, projected low point
+│   │       ├── sinking.rs     set-aside, should-have, shortfall
+│   │       ├── debts.rs       interest/day, payoff projection, delay cost
+│   │       ├── rules.rs       rule matching, description normalization, fingerprint
+│   │       ├── planned.rs     planned-item matcher
+│   │       ├── alerts.rs      alert evaluation (snapshot in → alerts out), nag timing, quiet hours
+│   │       └── csv.rs         CSV row parsing with a column mapping
+│   └── hearth-server/         the binary
+│       ├── migrations/        sqlx SQL migrations (embedded)
+│       └── src/
+│           ├── main.rs        env, pool, migrate, scheduler, router
+│           ├── config.rs      typed env parsing
+│           ├── db/            sqlx row types and repositories, one module per table group
+│           ├── services/      budget, transactions, rules, planned, sinking, debts, balance, alerts, questions, accounts, settings, audit
+│           ├── api/           Axum handlers: auth, budget, transactions, review, planned, sinking, debts, balance, alerts, questions, accounts, settings, import, plaid, jobs, health
+│           ├── auth/          passwords, sessions, api keys, extractors
+│           ├── mcp/           rmcp server, one file per tool group
+│           ├── jobs/          scheduler, advisory lock, each job
+│           ├── integrations/  plaid/, privacy/, notify/ (ntfy, smtp)
+│           └── assets.rs      rust-embed of web/dist
+├── web/                       Vite + React + TS + Tailwind SPA
+│   └── src/ (routes: budget, transactions, review, planned, sinking, debts, alerts, settings, login, setup)
+├── docs/                      ARCHITECTURE.md, DATA-MODEL.md, OPEN-QUESTIONS.md, MCP.md
 ├── Dockerfile, docker-compose.yml, .env.example
+├── .github/workflows/ci.yml
 ├── README.md, CONTRIBUTING.md, LICENSE (MIT)
 ```
 
 ## 5. Conventions that everything obeys
 
-- **Money is integer cents.** Column type `integer`; TypeScript type `Cents =
-  number` with helpers in `core/money`. Never a float, never a string with a
-  decimal point past the HTTP boundary. Formatting to `$1,234.56` happens
-  only in the UI and in notification text.
+- **Money is integer cents.** Column type `bigint`; Rust type `Cents(i64)`
+  newtype in `hearth-core::money`; JSON fields named `*_cents` carry plain
+  integers. Never a float, never a string with a decimal point past the HTTP
+  boundary. Formatting to `$1,234.56` happens only in the UI and in
+  notification text.
 - **Sign convention:** negative = money out, positive = money in. Applies to
   transactions, and to "actual" on categories. A spend category's plan is a
   positive number; its `spent` is `-sum(amounts)`.
 - **Dates:** calendar dates are ISO `YYYY-MM-DD` strings in the household's
-  timezone (`households.timezone`, IANA). Months are `YYYY-MM` strings.
-  Instants (created_at, as-of timestamps, nudge times) are `timestamptz`.
+  timezone (`households.timezone`, IANA) and `chrono::NaiveDate` in Rust.
+  Months are `YYYY-MM` strings (`Month` newtype). Instants (created_at,
+  as-of timestamps, nudge times) are `timestamptz` / `DateTime<Utc>`.
   "Today" is always computed in the household timezone, never the server's.
 - **Single household.** There is a `households` row so that nothing is
   hard-coded, but every query assumes exactly one. Multi-tenant safety is out
@@ -366,15 +382,15 @@ from the settings page or via the `jobs.run` MCP tool.
 
 ## 9. MCP server
 
-- Endpoint: `POST /api/mcp` (Streamable HTTP, stateless; each request creates
-  a server instance bound to the DB). `GET` for SSE streams is supported by
-  the SDK transport. Auth: `Authorization: Bearer <api key>`; keys are
-  created in Settings, stored hashed, shown once.
-- Tool naming: `<domain>.<verb>`; all inputs/outputs are Zod-validated JSON;
-  money fields are `*_cents` integers; dates are ISO strings; every list tool
-  takes `limit`/`cursor`.
-- Tools are thin wrappers over `src/core` services, so the UI and the AI can
-  never disagree about a number.
+- Endpoint: `/mcp` (rmcp Streamable HTTP service mounted in the Axum router;
+  stateless sessions). Auth: `Authorization: Bearer <api key>` checked by an
+  Axum middleware before the request reaches rmcp; keys are created in
+  Settings, stored hashed, shown once.
+- Tool naming: `<domain>.<verb>`; inputs are serde structs with `schemars`
+  JSON Schemas; money fields are `*_cents` integers; dates are ISO strings;
+  every list tool takes `limit`/`cursor`.
+- Tools are thin wrappers over the server's services, so the UI and the AI
+  can never disagree about a number.
 
 Planned tool surface (full reference will be in `docs/MCP.md`):
 
@@ -420,8 +436,9 @@ Mobile-first; every screen works one-handed on a phone and widens gracefully.
 | **Alerts** | Open / notified / acked / done tabs; ack + resolve with a note. |
 | **Settings** | Household (timezone, pay schedule, cash floor, thresholds, quiet hours, nag), users, API keys, accounts (include in balance, reported balance), integrations status, jobs (last runs, run now), CSV presets. |
 
-Server components render the data; small client islands handle inline edits
-and call the JSON API, which calls the same core services as MCP.
+The SPA fetches from the JSON API with TanStack Query; the API calls the
+same services as MCP. Routes are code-split so the budget screen loads first
+and fast on a phone.
 
 ## 11. Auth and security
 
@@ -437,17 +454,17 @@ and call the JSON API, which calls the same core services as MCP.
   `APP_ENCRYPTION_KEY`. Rotating the key requires a documented re-encrypt
   script.
 - Ack links use a per-alert HMAC (`APP_SECRET`) with a 7-day expiry.
-- Rate limiting on `/login` and `/api/mcp` (simple in-memory token bucket;
-  fine for one household).
+- Rate limiting on `/api/auth/login` and `/mcp` (tower `governor`-style
+  in-memory token bucket; fine for one household).
 - OIDC later: `oidc_subjects` table mapping provider+subject → user; the
   `users.password_hash` becomes nullable at that point (noted in
   OPEN-QUESTIONS Q8).
 
 ## 12. Configuration
 
-All configuration is environment variables parsed once by a Zod schema in
-`src/lib/env.ts`; the app refuses to start with a clear message if something
-required is missing or malformed. Behavioral settings a user would change
+All configuration is environment variables parsed once into a typed
+`Config` struct in `config.rs`; the app refuses to start with a clear message
+if something required is missing or malformed. Behavioral settings a user would change
 from the UI (thresholds, quiet hours, pay schedule) live in the `settings`
 table with env defaults used only to seed them on first run.
 
@@ -461,33 +478,47 @@ table with env defaults used only to seed them on first run.
 
 ## 13. Build, run, deploy
 
-- `docker-compose.yml`: `app` (built from `Dockerfile`, multi-stage, runs
-  `drizzle-kit migrate` on start then the standalone server) and `db`
-  (`postgres:16-alpine` with a named volume). Healthcheck on `/api/health`.
-- `npm run dev` for local development against a local or compose Postgres.
-- `npm run seed` loads the demo household (fake accounts, ~3 months of fake
-  transactions, categories, rules, planned items, a sinking fund, two debts,
-  a couple of alerts).
-- CI (GitHub Actions): lint, typecheck, unit tests, `docker build`.
+- `Dockerfile` (multi-stage): `node:22-alpine` builds `web/dist`;
+  `rust:1-bookworm` with `cargo-chef` builds the release binary with the SPA
+  embedded; `debian:bookworm-slim` runtime with just the binary and CA
+  certificates, running as a non-root user. The binary runs pending
+  migrations on start.
+- `docker-compose.yml`: `app` (built from `Dockerfile`, env from `.env`) and
+  `db` (`postgres:16-alpine`, named volume). Healthcheck on `/api/health`.
+- Local development: `docker compose up db`, `cargo run -p hearth-server`
+  (serves the API and, in dev, proxies to or serves the Vite dev server),
+  `npm --prefix web run dev`.
+- `cargo run -p hearth-server -- seed` loads the demo household (fake
+  accounts, ~3 months of fake transactions, categories, rules, planned items,
+  a sinking fund, two debts, a couple of alerts).
+- CI (GitHub Actions): `cargo fmt --check`, `cargo clippy -D warnings`,
+  `cargo test` with a Postgres service, `npm ci && npm run lint && npm run
+  build` in `web/`, and `docker build`. No releases or tags until features
+  are close; main always builds.
 
 ## 14. Testing strategy
 
-- **Pure money math first** (`tests/core/*`): rollups and effective plan,
-  running estimate, projected low point (each component separately and
-  combined), debt interest/day, payoff projection and delay cost,
-  sinking-fund set-aside and should-have, rule matching, dedup fingerprint,
-  planned-item matching, alert evaluation (table-driven: state in → alerts
-  out), nag schedule timing, quiet hours.
-- **Service tests** against a real Postgres (testcontainers or the compose
-  DB) for dedup indexes, pending→posted upserts, CSV import rollback.
-- **MCP contract test**: every tool's Zod schema round-trips and a smoke call
-  against the seed DB.
-- UI is covered by a few Playwright smoke flows (login, categorize from
+- **Pure money math first** (`crates/hearth-core`, plain `#[test]`s, no DB):
+  rollups and effective plan, running estimate, projected low point (each
+  component separately and combined), debt interest/day, payoff projection
+  and delay cost, sinking-fund set-aside and should-have, rule matching,
+  dedup fingerprint, planned-item matching, alert evaluation (table-driven:
+  snapshot in → alerts out), nag schedule timing, quiet hours, CSV parsing.
+- **Service tests** (`#[sqlx::test]`, each test in its own fresh database)
+  for dedup indexes, pending→posted upserts, CSV import rollback, alert
+  dedupe keys, session expiry.
+- **MCP contract test**: every tool's schema serializes and a smoke call
+  against the seeded DB returns the same numbers as the service.
+- **Integration clients**: Plaid and Privacy.com clients are traits with a
+  recorded-fixture fake; the real clients are exercised only manually
+  against sandbox.
+- UI: Vitest for the small amount of client logic (money formatting, date
+  helpers) and a few Playwright smoke flows (login, categorize from the
   review queue, ack an alert).
 
 ## 15. Delivery order (from the build prompt, unchanged)
 
-1. Scaffold (Next.js, Drizzle, Docker, env, CI, lint).
+1. Scaffold (Cargo workspace, Axum skeleton, sqlx, Vite SPA, Docker, env, CI, lint).
 2. Data model + migrations.
 3. Seed.
 4. MCP server with the budget/transactions/balance/alerts/questions tools.
