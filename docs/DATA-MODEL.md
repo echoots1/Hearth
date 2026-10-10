@@ -131,22 +131,23 @@ structs validated on read and write). One row per key per household.
 | value | jsonb | |
 | updated_at | timestamptz | |
 
-Registered keys and defaults:
+Registered keys and defaults (the Rust struct is `hearth_core::settings::Settings`;
+every field has a default so a fresh household works with no rows):
 
 | Key | Default | Used by |
 | --- | --- | --- |
-| `pay_schedule` | `{ "kind": "biweekly", "anchor": "2026-01-02" }` | projected low point |
+| `pay_schedule` | `{ "kind": "semimonthly", "days": [1, 15] }` (also `weekly`/`biweekly` with `anchor`, `monthly` with `day`) | projected low point |
 | `cash_floor_cents` | `50000` | floor_breached, "can we buy" |
 | `large_charge_threshold_cents` | `10000` | unplanned_large_charge |
 | `planned_match` | `{ "days": 5, "pct": 10, "min_cents": 500 }` | planned-item matcher |
-| `pace_alert` | `{ "ratio": 1.1, "from_day": 10 }` | category_pace |
+| `pace_alert` | `{ "ratio_pct": 110, "from_day": 10 }` (integer percent, never a float) | category_pace |
 | `stale_balance_days` | `7` | balance_stale |
 | `review_backlog` | `{ "count": 10, "days": 3 }` | review_queue_backlog |
 | `sync_failure_threshold` | `3` | sync_failed |
 | `debt_strategy` | `{ "kind": "avalanche", "extra_payment_cents": 0, "custom_order": [] }` | debts |
 | `notifications` | `{ "quiet_hours": { "start": "22:00", "end": "07:00" }, "quiet_hours_override_critical": true }` | notify job |
 | `nag` | `{ "first_after_minutes": 60, "every_minutes": 240, "max_nudges": 6 }` | notify job |
-| `csv_presets` | `[]` | CSV import |
+| `csv_presets` | `[]` (server-only, not part of the core struct) | CSV import |
 
 ### accounts
 
