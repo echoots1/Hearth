@@ -7,6 +7,8 @@ mod assets;
 #[allow(dead_code)] // fields are consumed as integrations land
 mod config;
 mod db;
+#[allow(dead_code)] // wired up by the API, MCP and jobs steps
+mod services;
 
 use std::net::SocketAddr;
 
