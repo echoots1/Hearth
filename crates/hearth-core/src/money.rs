@@ -167,6 +167,32 @@ impl std::iter::Sum for Cents {
         Cents::sum(iter)
     }
 }
+#[cfg(feature = "sqlx")]
+mod sqlx_impl {
+    use super::Cents;
+    use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef, Postgres};
+    use sqlx::{Decode, Encode, Type, encode::IsNull, error::BoxDynError};
+
+    impl Type<Postgres> for Cents {
+        fn type_info() -> PgTypeInfo {
+            <i64 as Type<Postgres>>::type_info()
+        }
+        fn compatible(ty: &PgTypeInfo) -> bool {
+            <i64 as Type<Postgres>>::compatible(ty)
+        }
+    }
+    impl<'q> Encode<'q, Postgres> for Cents {
+        fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
+            <i64 as Encode<'q, Postgres>>::encode_by_ref(&self.0, buf)
+        }
+    }
+    impl<'r> Decode<'r, Postgres> for Cents {
+        fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
+            <i64 as Decode<'r, Postgres>>::decode(value).map(Cents)
+        }
+    }
+}
+
 impl From<i64> for Cents {
     fn from(v: i64) -> Self {
         Cents(v)

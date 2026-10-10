@@ -12,7 +12,6 @@ use rust_embed::Embed;
 
 #[derive(Embed)]
 #[folder = "../../web/dist/"]
-#[exclude = ".gitkeep"]
 struct WebDist;
 
 /// Serve a static file if it exists, otherwise `index.html` (SPA fallback).

@@ -10,5 +10,4 @@
 .DS_Store
 # web
 web/node_modules
-web/dist/*
-!web/dist/.gitkeep
+web/dist/
