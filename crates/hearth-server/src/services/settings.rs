@@ -43,20 +43,26 @@ pub async fn load(ctx: &Ctx) -> Result<Settings> {
 pub async fn load_raw(ctx: &Ctx) -> Result<Value> {
     let settings = load(ctx).await?;
     let mut v = serde_json::to_value(&settings).map_err(anyhow::Error::from)?;
-    let presets: Option<(Value,)> =
-        sqlx::query_as("select value from settings where household_id = $1 and key = 'csv_presets'")
-            .bind(ctx.household_id)
-            .fetch_optional(&ctx.pool)
-            .await?;
+    let presets: Option<(Value,)> = sqlx::query_as(
+        "select value from settings where household_id = $1 and key = 'csv_presets'",
+    )
+    .bind(ctx.household_id)
+    .fetch_optional(&ctx.pool)
+    .await?;
     if let Value::Object(m) = &mut v {
-        m.insert("csv_presets".into(), presets.map(|p| p.0).unwrap_or(Value::Array(vec![])));
+        m.insert(
+            "csv_presets".into(),
+            presets.map(|p| p.0).unwrap_or(Value::Array(vec![])),
+        );
     }
     Ok(v)
 }
 
 pub async fn get(ctx: &Ctx, key: &str) -> Result<Value> {
     let raw = load_raw(ctx).await?;
-    raw.get(key).cloned().ok_or_else(|| invalid(format!("unknown setting {key:?}")))
+    raw.get(key)
+        .cloned()
+        .ok_or_else(|| invalid(format!("unknown setting {key:?}")))
 }
 
 /// Validate by merging into the typed struct, then store.

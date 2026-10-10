@@ -67,7 +67,14 @@ pub struct CreateRule {
     pub apply_now: Option<bool>,
 }
 
-fn validate(action: RuleAction, category_id: Option<Uuid>, match_type: RuleMatchType, pattern: &str, min: Option<Cents>, max: Option<Cents>) -> Result<()> {
+fn validate(
+    action: RuleAction,
+    category_id: Option<Uuid>,
+    match_type: RuleMatchType,
+    pattern: &str,
+    min: Option<Cents>,
+    max: Option<Cents>,
+) -> Result<()> {
     validate_pattern(match_type.into(), pattern).map_err(invalid)?;
     if action == RuleAction::Categorize && category_id.is_none() {
         return Err(invalid("category_id is required for a categorize rule"));
@@ -80,14 +87,28 @@ fn validate(action: RuleAction, category_id: Option<Uuid>, match_type: RuleMatch
     Ok(())
 }
 
-pub async fn create(ctx: &Ctx, actor: &Actor, c: CreateRule) -> Result<(Rule, super::transactions::ApplyRulesSummary)> {
+pub async fn create(
+    ctx: &Ctx,
+    actor: &Actor,
+    c: CreateRule,
+) -> Result<(Rule, super::transactions::ApplyRulesSummary)> {
     let action = c.action.unwrap_or(RuleAction::Categorize);
     let match_type = c.match_type.unwrap_or(RuleMatchType::Contains);
-    validate(action, c.category_id, match_type, &c.pattern, c.amount_min_cents, c.amount_max_cents)?;
+    validate(
+        action,
+        c.category_id,
+        match_type,
+        &c.pattern,
+        c.amount_min_cents,
+        c.amount_max_cents,
+    )?;
     if let Some(cat) = c.category_id {
         super::budget::get_category(ctx, cat).await?;
     }
-    let name = c.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| c.pattern.clone());
+    let name = c
+        .name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| c.pattern.clone());
     let r = sqlx::query_as::<_, Rule>(
         "insert into rules (household_id, name, priority, match_type, pattern, account_id, amount_min_cents, amount_max_cents, action, category_id, set_note)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *",
@@ -105,7 +126,17 @@ pub async fn create(ctx: &Ctx, actor: &Actor, c: CreateRule) -> Result<(Rule, su
     .bind(c.set_note.as_deref().map(str::trim).filter(|s| !s.is_empty()))
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "rule.create", "rules", r.id, None::<&()>, Some(&r)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "rule.create",
+        "rules",
+        r.id,
+        None::<&()>,
+        Some(&r),
+    )
+    .await?;
     let summary = if c.apply_now.unwrap_or(true) {
         super::transactions::apply_rules(ctx, actor, false, None).await?
     } else {
@@ -135,7 +166,14 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateRule) -> Result
     let match_type = u.match_type.unwrap_or(before.match_type);
     let pattern = u.pattern.clone().unwrap_or_else(|| before.pattern.clone());
     let category_id = u.category_id.or(before.category_id);
-    validate(action, category_id, match_type, &pattern, u.amount_min_cents.or(before.amount_min_cents), u.amount_max_cents.or(before.amount_max_cents))?;
+    validate(
+        action,
+        category_id,
+        match_type,
+        &pattern,
+        u.amount_min_cents.or(before.amount_min_cents),
+        u.amount_max_cents.or(before.amount_max_cents),
+    )?;
     let after = sqlx::query_as::<_, Rule>(
         "update rules set name = coalesce($3, name), pattern = $4, match_type = $5, priority = coalesce($6, priority),
            account_id = coalesce($7, account_id), amount_min_cents = coalesce($8, amount_min_cents), amount_max_cents = coalesce($9, amount_max_cents),
@@ -157,14 +195,38 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateRule) -> Result
     .bind(u.is_active)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "rule.update", "rules", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "rule.update",
+        "rules",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<()> {
     let before = get(ctx, id).await?;
-    sqlx::query("delete from rules where household_id = $1 and id = $2").bind(ctx.household_id).bind(id).execute(&ctx.pool).await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "rule.delete", "rules", id, Some(&before), None::<&()>).await?;
+    sqlx::query("delete from rules where household_id = $1 and id = $2")
+        .bind(ctx.household_id)
+        .bind(id)
+        .execute(&ctx.pool)
+        .await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "rule.delete",
+        "rules",
+        id,
+        Some(&before),
+        None::<&()>,
+    )
+    .await?;
     Ok(())
 }
 
@@ -177,7 +239,9 @@ pub async fn create_from_transaction(
     pattern: Option<String>,
 ) -> Result<(Rule, super::transactions::ApplyRulesSummary)> {
     let t = super::transactions::get(ctx, transaction_id).await?;
-    let pattern = pattern.filter(|p| !p.trim().is_empty()).unwrap_or_else(|| suggest_pattern(&t.original_description));
+    let pattern = pattern
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| suggest_pattern(&t.original_description));
     let (rule, summary) = create(
         ctx,
         actor,
@@ -202,7 +266,12 @@ pub async fn create_from_transaction(
 }
 
 /// Dry-run: which transactions (last 90 days) would this pattern match?
-pub async fn preview(ctx: &Ctx, match_type: RuleMatchType, pattern: &str, account_id: Option<Uuid>) -> Result<Vec<crate::db::models::Transaction>> {
+pub async fn preview(
+    ctx: &Ctx,
+    match_type: RuleMatchType,
+    pattern: &str,
+    account_id: Option<Uuid>,
+) -> Result<Vec<crate::db::models::Transaction>> {
     validate_pattern(match_type.into(), pattern).map_err(invalid)?;
     let rule = core::Rule {
         id: Uuid::nil(),
@@ -227,6 +296,15 @@ pub async fn preview(ctx: &Ctx, match_type: RuleMatchType, pattern: &str, accoun
     .await?;
     Ok(rows
         .into_iter()
-        .filter(|t| core::rule_matches(&rule, &core::TxnForRules { account_id: t.account_id, description: t.description.clone(), amount_cents: t.amount_cents }))
+        .filter(|t| {
+            core::rule_matches(
+                &rule,
+                &core::TxnForRules {
+                    account_id: t.account_id,
+                    description: t.description.clone(),
+                    amount_cents: t.amount_cents,
+                },
+            )
+        })
         .collect())
 }

@@ -32,12 +32,14 @@ pub async fn list(ctx: &Ctx, q: &ListQuery) -> Result<Vec<PlannedItem>> {
 }
 
 pub async fn get(ctx: &Ctx, id: Uuid) -> Result<PlannedItem> {
-    sqlx::query_as::<_, PlannedItem>("select * from planned_items where household_id = $1 and id = $2")
-        .bind(ctx.household_id)
-        .bind(id)
-        .fetch_optional(&ctx.pool)
-        .await?
-        .ok_or(Error::NotFound)
+    sqlx::query_as::<_, PlannedItem>(
+        "select * from planned_items where household_id = $1 and id = $2",
+    )
+    .bind(ctx.household_id)
+    .bind(id)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .ok_or(Error::NotFound)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,7 +57,9 @@ pub async fn create(ctx: &Ctx, actor: &Actor, c: CreatePlanned) -> Result<Planne
         return Err(invalid("item is required"));
     }
     if c.amount_cents.0 < 0 {
-        return Err(invalid("amount_cents must be ≥ 0 (planned items are spend)"));
+        return Err(invalid(
+            "amount_cents must be ≥ 0 (planned items are spend)",
+        ));
     }
     if let Some(cat) = c.category_id {
         super::budget::get_category(ctx, cat).await?;
@@ -73,7 +77,17 @@ pub async fn create(ctx: &Ctx, actor: &Actor, c: CreatePlanned) -> Result<Planne
     .bind(c.note.unwrap_or_default())
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "planned.create", "planned_items", p.id, None::<&()>, Some(&p)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "planned.create",
+        "planned_items",
+        p.id,
+        None::<&()>,
+        Some(&p),
+    )
+    .await?;
     Ok(p)
 }
 
@@ -112,18 +126,58 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdatePlanned) -> Res
     .bind(&u.note)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "planned.update", "planned_items", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "planned.update",
+        "planned_items",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
-pub async fn set_status(ctx: &Ctx, actor: &Actor, id: Uuid, status: PlannedStatus, note: Option<String>) -> Result<PlannedItem> {
-    update(ctx, actor, id, UpdatePlanned { status: Some(status), note, ..Default::default() }).await
+pub async fn set_status(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    status: PlannedStatus,
+    note: Option<String>,
+) -> Result<PlannedItem> {
+    update(
+        ctx,
+        actor,
+        id,
+        UpdatePlanned {
+            status: Some(status),
+            note,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 pub async fn delete(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<()> {
     let before = get(ctx, id).await?;
-    sqlx::query("delete from planned_items where household_id = $1 and id = $2").bind(ctx.household_id).bind(id).execute(&ctx.pool).await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "planned.delete", "planned_items", id, Some(&before), None::<&()>).await?;
+    sqlx::query("delete from planned_items where household_id = $1 and id = $2")
+        .bind(ctx.household_id)
+        .bind(id)
+        .execute(&ctx.pool)
+        .await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "planned.delete",
+        "planned_items",
+        id,
+        Some(&before),
+        None::<&()>,
+    )
+    .await?;
     Ok(())
 }
 
@@ -138,17 +192,33 @@ pub async fn outstanding(ctx: &Ctx) -> Result<Vec<PlannedItem>> {
 }
 
 /// Try to match a transaction to an outstanding planned item; link on success.
-pub async fn try_match(ctx: &Ctx, t: &Transaction, cfg: &hearth_core::settings::PlannedMatch) -> Result<Option<PlannedItem>> {
+pub async fn try_match(
+    ctx: &Ctx,
+    t: &Transaction,
+    cfg: &hearth_core::settings::PlannedMatch,
+) -> Result<Option<PlannedItem>> {
     if t.planned_item_id.is_some() || t.amount_cents.0 >= 0 {
         return Ok(None);
     }
     let items = outstanding(ctx).await?;
     let cands: Vec<PlannedCandidate> = items
         .iter()
-        .map(|p| PlannedCandidate { id: p.id, date: p.date, amount_cents: p.amount_cents, category_id: p.category_id, outstanding: true })
+        .map(|p| PlannedCandidate {
+            id: p.id,
+            date: p.date,
+            amount_cents: p.amount_cents,
+            category_id: p.category_id,
+            outstanding: true,
+        })
         .collect();
-    let txn = TxnForPlanned { date: t.date, amount_cents: t.amount_cents, category_id: t.category_id };
-    let Some(hit) = find_match(&txn, &cands, cfg) else { return Ok(None) };
+    let txn = TxnForPlanned {
+        date: t.date,
+        amount_cents: t.amount_cents,
+        category_id: t.category_id,
+    };
+    let Some(hit) = find_match(&txn, &cands, cfg) else {
+        return Ok(None);
+    };
     let mut tx = ctx.pool.begin().await?;
     let item = sqlx::query_as::<_, PlannedItem>(
         "update planned_items set matched_transaction_id = $2, status = 'done', updated_at = now() where id = $1 returning *",

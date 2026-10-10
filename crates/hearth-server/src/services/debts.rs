@@ -8,11 +8,13 @@ use super::{Actor, Ctx, Error, Result, invalid};
 use crate::db::models::{Debt, DebtKind};
 
 pub async fn list(ctx: &Ctx, include_closed: bool) -> Result<Vec<Debt>> {
-    Ok(sqlx::query_as::<_, Debt>("select * from debts where household_id = $1 and ($2 or not is_closed) order by name")
-        .bind(ctx.household_id)
-        .bind(include_closed)
-        .fetch_all(&ctx.pool)
-        .await?)
+    Ok(sqlx::query_as::<_, Debt>(
+        "select * from debts where household_id = $1 and ($2 or not is_closed) order by name",
+    )
+    .bind(ctx.household_id)
+    .bind(include_closed)
+    .fetch_all(&ctx.pool)
+    .await?)
 }
 
 pub async fn get(ctx: &Ctx, id: Uuid) -> Result<Debt> {
@@ -94,7 +96,10 @@ pub async fn upsert(ctx: &Ctx, actor: &Actor, u: UpsertDebt) -> Result<Debt> {
             .await?
         }
     };
-    if before.as_ref().is_none_or(|b| b.balance_cents != after.balance_cents) {
+    if before
+        .as_ref()
+        .is_none_or(|b| b.balance_cents != after.balance_cents)
+    {
         sqlx::query("insert into balance_snapshots (debt_id, kind, balance_cents, as_of, actor_kind, actor_id) values ($1, 'reported', $2, $3, $4, $5)")
             .bind(after.id)
             .bind(after.balance_cents)
@@ -104,11 +109,27 @@ pub async fn upsert(ctx: &Ctx, actor: &Actor, u: UpsertDebt) -> Result<Debt> {
             .execute(&ctx.pool)
             .await?;
     }
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "debt.upsert", "debts", after.id, before.as_ref(), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "debt.upsert",
+        "debts",
+        after.id,
+        before.as_ref(),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
-pub async fn set_balance(ctx: &Ctx, actor: &Actor, id: Uuid, balance: Cents, as_of: Option<DateTime<Utc>>) -> Result<Debt> {
+pub async fn set_balance(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    balance: Cents,
+    as_of: Option<DateTime<Utc>>,
+) -> Result<Debt> {
     if balance.0 < 0 {
         return Err(invalid("balance must be ≥ 0"));
     }
@@ -132,7 +153,17 @@ pub async fn set_balance(ctx: &Ctx, actor: &Actor, id: Uuid, balance: Cents, as_
         .bind(actor.id())
         .execute(&mut *tx)
         .await?;
-    super::audit::record(&mut *tx, ctx.household_id, actor, "debt.set_balance", "debts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &mut *tx,
+        ctx.household_id,
+        actor,
+        "debt.set_balance",
+        "debts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     tx.commit().await?;
     Ok(after)
 }
@@ -145,7 +176,17 @@ pub async fn close(ctx: &Ctx, actor: &Actor, id: Uuid, closed: bool) -> Result<D
         .bind(closed)
         .fetch_one(&ctx.pool)
         .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "debt.close", "debts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "debt.close",
+        "debts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -185,7 +226,11 @@ pub async fn list_with_math(ctx: &Ctx) -> Result<Vec<DebtWithMath>> {
 pub async fn projection(ctx: &Ctx) -> Result<Projection> {
     let settings = super::settings::load(ctx).await?;
     let inputs: Vec<DebtInput> = list(ctx, false).await?.iter().map(to_input).collect();
-    Ok(debts::project(&inputs, &settings.debt_strategy, ctx.month()))
+    Ok(debts::project(
+        &inputs,
+        &settings.debt_strategy,
+        ctx.month(),
+    ))
 }
 
 pub async fn delay_cost(ctx: &Ctx, debt_id: Uuid, amount: Cents) -> Result<DelayCost> {
@@ -194,7 +239,14 @@ pub async fn delay_cost(ctx: &Ctx, debt_id: Uuid, amount: Cents) -> Result<Delay
     }
     let settings = super::settings::load(ctx).await?;
     let inputs: Vec<DebtInput> = list(ctx, false).await?.iter().map(to_input).collect();
-    debts::delay_cost(&inputs, &settings.debt_strategy, ctx.month(), debt_id, amount).ok_or(Error::NotFound)
+    debts::delay_cost(
+        &inputs,
+        &settings.debt_strategy,
+        ctx.month(),
+        debt_id,
+        amount,
+    )
+    .ok_or(Error::NotFound)
 }
 
 /// Previous recorded balance for redraw detection.

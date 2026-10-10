@@ -59,7 +59,17 @@ pub async fn ack(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<Alert> {
     .bind(actor.display())
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "alert.ack", "alerts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "alert.ack",
+        "alerts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -76,7 +86,17 @@ pub async fn resolve(ctx: &Ctx, actor: &Actor, id: Uuid, resolution: String) -> 
     .bind(actor.display())
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "alert.resolve", "alerts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "alert.resolve",
+        "alerts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -91,7 +111,17 @@ pub async fn snooze(ctx: &Ctx, actor: &Actor, id: Uuid, until: DateTime<Utc>) ->
         .bind(until)
         .fetch_one(&ctx.pool)
         .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "alert.snooze", "alerts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "alert.snooze",
+        "alerts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -107,7 +137,17 @@ pub async fn reopen(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<Alert> {
     .fetch_one(&ctx.pool)
     .await
     .map_err(super::budget::unique_to_conflict)?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "alert.reopen", "alerts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "alert.reopen",
+        "alerts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -119,7 +159,11 @@ pub struct UpsertSummary {
 
 /// Materialize evaluator output: insert new live alerts by dedupe key, refresh
 /// `last_seen_at`/detail/amount on existing ones. Never touches `status`.
-pub async fn upsert_candidates(ctx: &Ctx, source: &str, candidates: &[AlertCandidate]) -> Result<UpsertSummary> {
+pub async fn upsert_candidates(
+    ctx: &Ctx,
+    source: &str,
+    candidates: &[AlertCandidate],
+) -> Result<UpsertSummary> {
     let mut summary = UpsertSummary::default();
     for c in candidates {
         let existing: Option<(Uuid,)> = sqlx::query_as("select id from alerts where household_id = $1 and dedupe_key = $2 and status <> 'done'")

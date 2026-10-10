@@ -40,7 +40,10 @@ pub struct CreateAccount {
 }
 
 fn default_include(t: AccountType) -> bool {
-    matches!(t, AccountType::Checking | AccountType::Savings | AccountType::Cash)
+    matches!(
+        t,
+        AccountType::Checking | AccountType::Savings | AccountType::Cash
+    )
 }
 
 pub async fn create(ctx: &Ctx, actor: &Actor, c: CreateAccount) -> Result<Account> {
@@ -62,7 +65,17 @@ pub async fn create(ctx: &Ctx, actor: &Actor, c: CreateAccount) -> Result<Accoun
     .bind(c.include_in_running_balance.unwrap_or_else(|| default_include(c.account_type)))
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "account.create", "accounts", a.id, None::<&()>, Some(&a)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "account.create",
+        "accounts",
+        a.id,
+        None::<&()>,
+        Some(&a),
+    )
+    .await?;
     Ok(a)
 }
 
@@ -89,7 +102,17 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateAccount) -> Res
     .bind(&u.institution_label)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "account.update", "accounts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "account.update",
+        "accounts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -127,13 +150,28 @@ pub async fn set_reported_balance(
     .bind(actor.id())
     .execute(&mut *tx)
     .await?;
-    super::audit::record(&mut *tx, ctx.household_id, actor, "account.set_reported_balance", "accounts", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &mut *tx,
+        ctx.household_id,
+        actor,
+        "account.set_reported_balance",
+        "accounts",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     tx.commit().await?;
     Ok(after)
 }
 
 /// Record a bank-reported balance (from a sync). No audit row: it's data, not a decision.
-pub async fn set_bank_balance(ctx: &Ctx, id: Uuid, balance: Cents, as_of: DateTime<Utc>) -> Result<()> {
+pub async fn set_bank_balance(
+    ctx: &Ctx,
+    id: Uuid,
+    balance: Cents,
+    as_of: DateTime<Utc>,
+) -> Result<()> {
     let mut tx = ctx.pool.begin().await?;
     sqlx::query(
         "update accounts set bank_balance_cents = $3, bank_balance_as_of = $4, updated_at = now() where household_id = $1 and id = $2",

@@ -43,7 +43,10 @@ fn encode_cursor(date: NaiveDate, id: Uuid) -> String {
 
 fn decode_cursor(s: &str) -> Result<(NaiveDate, Uuid)> {
     let (d, i) = s.split_once('|').ok_or_else(|| invalid("bad cursor"))?;
-    Ok((d.parse().map_err(|_| invalid("bad cursor"))?, i.parse().map_err(|_| invalid("bad cursor"))?))
+    Ok((
+        d.parse().map_err(|_| invalid("bad cursor"))?,
+        i.parse().map_err(|_| invalid("bad cursor"))?,
+    ))
 }
 
 pub async fn list(ctx: &Ctx, q: &ListQuery) -> Result<Page<Transaction>> {
@@ -55,7 +58,8 @@ pub async fn list(ctx: &Ctx, q: &ListQuery) -> Result<Page<Transaction>> {
         }
         (None, f, t) => (f, t),
     };
-    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("select * from transactions where household_id = ");
+    let mut qb: QueryBuilder<sqlx::Postgres> =
+        QueryBuilder::new("select * from transactions where household_id = ");
     qb.push_bind(ctx.household_id);
     if !q.include_deleted.unwrap_or(false) {
         qb.push(" and deleted_at is null");
@@ -87,14 +91,20 @@ pub async fn list(ctx: &Ctx, q: &ListQuery) -> Result<Page<Transaction>> {
     if let Some(text) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         let pat = format!("%{}%", text.replace('%', "\\%"));
         qb.push(" and (description ilike ").push_bind(pat.clone());
-        qb.push(" or original_description ilike ").push_bind(pat.clone());
+        qb.push(" or original_description ilike ")
+            .push_bind(pat.clone());
         qb.push(" or note ilike ").push_bind(pat).push(")");
     }
     if let Some(c) = &q.cursor {
         let (d, id) = decode_cursor(c)?;
-        qb.push(" and (date, id) < (").push_bind(d).push(", ").push_bind(id).push(")");
+        qb.push(" and (date, id) < (")
+            .push_bind(d)
+            .push(", ")
+            .push_bind(id)
+            .push(")");
     }
-    qb.push(" order by date desc, id desc limit ").push_bind(limit + 1);
+    qb.push(" order by date desc, id desc limit ")
+        .push_bind(limit + 1);
     let mut rows: Vec<Transaction> = qb.build_query_as().fetch_all(&ctx.pool).await?;
     let next = if rows.len() as i64 > limit {
         rows.truncate(limit as usize);
@@ -102,16 +112,21 @@ pub async fn list(ctx: &Ctx, q: &ListQuery) -> Result<Page<Transaction>> {
     } else {
         None
     };
-    Ok(Page { items: rows, next_cursor: next })
+    Ok(Page {
+        items: rows,
+        next_cursor: next,
+    })
 }
 
 pub async fn get(ctx: &Ctx, id: Uuid) -> Result<Transaction> {
-    sqlx::query_as::<_, Transaction>("select * from transactions where household_id = $1 and id = $2")
-        .bind(ctx.household_id)
-        .bind(id)
-        .fetch_optional(&ctx.pool)
-        .await?
-        .ok_or(Error::NotFound)
+    sqlx::query_as::<_, Transaction>(
+        "select * from transactions where household_id = $1 and id = $2",
+    )
+    .bind(ctx.household_id)
+    .bind(id)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .ok_or(Error::NotFound)
 }
 
 pub async fn review_queue(ctx: &Ctx, limit: Option<i64>) -> Result<Vec<Transaction>> {
@@ -161,7 +176,11 @@ pub async fn create_manual(ctx: &Ctx, actor: &Actor, c: CreateManual) -> Result<
         super::budget::get_category(ctx, cat).await?;
     }
     let fp = fingerprint(c.account_id, c.date, c.amount_cents, &c.description);
-    let review = if c.category_id.is_some() { ReviewStatus::None } else { ReviewStatus::Pending };
+    let review = if c.category_id.is_some() {
+        ReviewStatus::None
+    } else {
+        ReviewStatus::Pending
+    };
     let t = sqlx::query_as::<_, Transaction>(
         "insert into transactions (household_id, account_id, date, description, original_description, amount_cents,
            category_id, source, fingerprint, pending, note, planned_item_id, review_status)
@@ -186,12 +205,28 @@ pub async fn create_manual(ctx: &Ctx, actor: &Actor, c: CreateManual) -> Result<
         }
         _ => Error::Db(e),
     })?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "transaction.create", "transactions", t.id, None::<&()>, Some(&t)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "transaction.create",
+        "transactions",
+        t.id,
+        None::<&()>,
+        Some(&t),
+    )
+    .await?;
     Ok(t)
 }
 
 /// Set (or clear with `None`) the category. Resolves the review queue entry.
-pub async fn categorize(ctx: &Ctx, actor: &Actor, id: Uuid, category_id: Option<Uuid>, note: Option<String>) -> Result<Transaction> {
+pub async fn categorize(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    category_id: Option<Uuid>,
+    note: Option<String>,
+) -> Result<Transaction> {
     let before = get(ctx, id).await?;
     if let Some(cat) = category_id {
         super::budget::get_category(ctx, cat).await?;
@@ -207,7 +242,17 @@ pub async fn categorize(ctx: &Ctx, actor: &Actor, id: Uuid, category_id: Option<
     .bind(&note)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "transaction.categorize", "transactions", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "transaction.categorize",
+        "transactions",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -219,7 +264,12 @@ pub struct UpdateTransaction {
     pub pending: Option<bool>,
 }
 
-pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateTransaction) -> Result<Transaction> {
+pub async fn update(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    u: UpdateTransaction,
+) -> Result<Transaction> {
     let before = get(ctx, id).await?;
     let after = sqlx::query_as::<_, Transaction>(
         "update transactions set description = coalesce($3, description), note = coalesce($4, note),
@@ -234,16 +284,40 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateTransaction) ->
     .bind(u.pending)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "transaction.update", "transactions", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "transaction.update",
+        "transactions",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
 pub async fn set_note(ctx: &Ctx, actor: &Actor, id: Uuid, note: String) -> Result<Transaction> {
-    update(ctx, actor, id, UpdateTransaction { note: Some(note), ..Default::default() }).await
+    update(
+        ctx,
+        actor,
+        id,
+        UpdateTransaction {
+            note: Some(note),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 /// Link to a planned item (marks it done) or unlink with `None`.
-pub async fn link_planned(ctx: &Ctx, actor: &Actor, id: Uuid, planned_item_id: Option<Uuid>) -> Result<Transaction> {
+pub async fn link_planned(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    planned_item_id: Option<Uuid>,
+) -> Result<Transaction> {
     let before = get(ctx, id).await?;
     let mut tx = ctx.pool.begin().await?;
     if let Some(old) = before.planned_item_id
@@ -275,7 +349,17 @@ pub async fn link_planned(ctx: &Ctx, actor: &Actor, id: Uuid, planned_item_id: O
     .bind(planned_item_id)
     .fetch_one(&mut *tx)
     .await?;
-    super::audit::record(&mut *tx, ctx.household_id, actor, "transaction.link_planned", "transactions", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &mut *tx,
+        ctx.household_id,
+        actor,
+        "transaction.link_planned",
+        "transactions",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     tx.commit().await?;
     Ok(after)
 }
@@ -289,7 +373,17 @@ pub async fn soft_delete(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<Transacti
     .bind(id)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "transaction.delete", "transactions", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "transaction.delete",
+        "transactions",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -315,7 +409,12 @@ pub struct ApplyRulesSummary {
 
 /// Apply the household's rules to uncategorized, non-deleted transactions
 /// (or to every transaction when `force`). Unmatched rows enter the review queue.
-pub async fn apply_rules(ctx: &Ctx, actor: &Actor, force: bool, only_ids: Option<&[Uuid]>) -> Result<ApplyRulesSummary> {
+pub async fn apply_rules(
+    ctx: &Ctx,
+    actor: &Actor,
+    force: bool,
+    only_ids: Option<&[Uuid]>,
+) -> Result<ApplyRulesSummary> {
     let rules = super::rules::core_rules(ctx).await?;
     let targets: Vec<Transaction> = match only_ids {
         Some(ids) => {
@@ -338,7 +437,10 @@ pub async fn apply_rules(ctx: &Ctx, actor: &Actor, force: bool, only_ids: Option
     let mut summary = ApplyRulesSummary::default();
     for t in &targets {
         // Never override a human/AI decision unless forced.
-        if !force && (t.review_status == ReviewStatus::Resolved || (t.category_id.is_some() && t.rule_id.is_none())) {
+        if !force
+            && (t.review_status == ReviewStatus::Resolved
+                || (t.category_id.is_some() && t.rule_id.is_none()))
+        {
             continue;
         }
         summary.examined += 1;
@@ -351,7 +453,17 @@ pub async fn apply_rules(ctx: &Ctx, actor: &Actor, force: bool, only_ids: Option
         }
     }
     if summary.examined > 0 {
-        super::audit::record(&ctx.pool, ctx.household_id, actor, "transactions.apply_rules", "transactions", "*", None::<&()>, Some(&summary)).await?;
+        super::audit::record(
+            &ctx.pool,
+            ctx.household_id,
+            actor,
+            "transactions.apply_rules",
+            "transactions",
+            "*",
+            None::<&()>,
+            Some(&summary),
+        )
+        .await?;
     }
     Ok(summary)
 }
@@ -362,7 +474,11 @@ pub async fn apply_rules_to<'e>(
     rules: &[(core_rules::Rule, Option<String>)],
     t: &Transaction,
 ) -> Result<RuleOutcome> {
-    let txn = core_rules::TxnForRules { account_id: t.account_id, description: t.description.clone(), amount_cents: t.amount_cents };
+    let txn = core_rules::TxnForRules {
+        account_id: t.account_id,
+        description: t.description.clone(),
+        amount_cents: t.amount_cents,
+    };
     let core_only: Vec<core_rules::Rule> = rules.iter().map(|(r, _)| r.clone()).collect();
     let Some(hit) = core_rules::first_match(&core_only, &txn) else {
         sqlx::query("update transactions set review_status = 'pending', updated_at = now() where id = $1 and category_id is null")
@@ -371,7 +487,10 @@ pub async fn apply_rules_to<'e>(
             .await?;
         return Ok(RuleOutcome::Unmatched);
     };
-    let set_note = rules.iter().find(|(r, _)| r.id == hit.id).and_then(|(_, n)| n.clone());
+    let set_note = rules
+        .iter()
+        .find(|(r, _)| r.id == hit.id)
+        .and_then(|(_, n)| n.clone());
     let outcome = match hit.action {
         core_rules::RuleAction::Categorize => RuleOutcome::Categorized,
         core_rules::RuleAction::Ignore => RuleOutcome::Ignored,
@@ -426,11 +545,13 @@ pub enum UpsertOutcome {
 pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, UpsertOutcome)> {
     // 1. Pending → posted replacement (Plaid): move the old row to the new id.
     if let Some(old_ext) = &inc.replaces_external_id
-        && let Some(existing) = sqlx::query_as::<_, Transaction>("select * from transactions where source = $1 and external_id = $2")
-            .bind(inc.source)
-            .bind(old_ext)
-            .fetch_optional(&ctx.pool)
-            .await?
+        && let Some(existing) = sqlx::query_as::<_, Transaction>(
+            "select * from transactions where source = $1 and external_id = $2",
+        )
+        .bind(inc.source)
+        .bind(old_ext)
+        .fetch_optional(&ctx.pool)
+        .await?
     {
         let t = sqlx::query_as::<_, Transaction>(
             "update transactions set external_id = $2, date = $3, description = case when description = original_description then $4 else description end,
@@ -450,11 +571,13 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
         return Ok((t, UpsertOutcome::Updated));
     }
     // 2. Existing row with the same id: update the provider-owned fields.
-    if let Some(existing) = sqlx::query_as::<_, Transaction>("select * from transactions where source = $1 and external_id = $2")
-        .bind(inc.source)
-        .bind(&inc.external_id)
-        .fetch_optional(&ctx.pool)
-        .await?
+    if let Some(existing) = sqlx::query_as::<_, Transaction>(
+        "select * from transactions where source = $1 and external_id = $2",
+    )
+    .bind(inc.source)
+    .bind(&inc.external_id)
+    .fetch_optional(&ctx.pool)
+    .await?
     {
         let unchanged = existing.date == inc.date
             && existing.amount_cents == inc.amount_cents
@@ -501,7 +624,11 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
 }
 
 /// Soft-delete a synced row the provider removed.
-pub async fn remove_external(ctx: &Ctx, source: TransactionSource, external_id: &str) -> Result<bool> {
+pub async fn remove_external(
+    ctx: &Ctx,
+    source: TransactionSource,
+    external_id: &str,
+) -> Result<bool> {
     let n = sqlx::query("update transactions set deleted_at = now(), updated_at = now() where household_id = $1 and source = $2 and external_id = $3 and deleted_at is null")
         .bind(ctx.household_id)
         .bind(source)

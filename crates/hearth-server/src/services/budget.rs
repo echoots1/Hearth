@@ -81,7 +81,17 @@ pub async fn create_group(ctx: &Ctx, actor: &Actor, c: CreateGroup) -> Result<Ca
     .fetch_one(&ctx.pool)
     .await
     .map_err(unique_to_conflict)?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "group.create", "category_groups", g.id, None::<&()>, Some(&g)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "group.create",
+        "category_groups",
+        g.id,
+        None::<&()>,
+        Some(&g),
+    )
+    .await?;
     Ok(g)
 }
 
@@ -91,13 +101,20 @@ pub struct UpdateGroup {
     pub sort_order: Option<i32>,
 }
 
-pub async fn update_group(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateGroup) -> Result<CategoryGroup> {
-    let before = sqlx::query_as::<_, CategoryGroup>("select * from category_groups where household_id = $1 and id = $2")
-        .bind(ctx.household_id)
-        .bind(id)
-        .fetch_optional(&ctx.pool)
-        .await?
-        .ok_or(Error::NotFound)?;
+pub async fn update_group(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    u: UpdateGroup,
+) -> Result<CategoryGroup> {
+    let before = sqlx::query_as::<_, CategoryGroup>(
+        "select * from category_groups where household_id = $1 and id = $2",
+    )
+    .bind(ctx.household_id)
+    .bind(id)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .ok_or(Error::NotFound)?;
     let after = sqlx::query_as::<_, CategoryGroup>(
         "update category_groups set name = coalesce($3, name), sort_order = coalesce($4, sort_order), updated_at = now()
          where household_id = $1 and id = $2 returning *",
@@ -109,7 +126,17 @@ pub async fn update_group(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateGroup) ->
     .fetch_one(&ctx.pool)
     .await
     .map_err(unique_to_conflict)?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "group.update", "category_groups", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "group.update",
+        "category_groups",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -163,7 +190,17 @@ pub async fn create_category(ctx: &Ctx, actor: &Actor, c: CreateCategory) -> Res
             .execute(&mut *tx)
             .await?;
     }
-    super::audit::record(&mut *tx, ctx.household_id, actor, "category.create", "categories", cat.id, None::<&()>, Some(&cat)).await?;
+    super::audit::record(
+        &mut *tx,
+        ctx.household_id,
+        actor,
+        "category.create",
+        "categories",
+        cat.id,
+        None::<&()>,
+        Some(&cat),
+    )
+    .await?;
     tx.commit().await?;
     Ok(cat)
 }
@@ -182,7 +219,12 @@ pub struct UpdateCategory {
     pub is_archived: Option<bool>,
 }
 
-pub async fn update_category(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateCategory) -> Result<Category> {
+pub async fn update_category(
+    ctx: &Ctx,
+    actor: &Actor,
+    id: Uuid,
+    u: UpdateCategory,
+) -> Result<Category> {
     let before = get_category(ctx, id).await?;
     if let Some(Some(d)) = u.due_day
         && !(1..=31).contains(&d)
@@ -214,12 +256,31 @@ pub async fn update_category(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateCatego
     .fetch_one(&ctx.pool)
     .await
     .map_err(unique_to_conflict)?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "category.update", "categories", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "category.update",
+        "categories",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
 pub async fn set_note(ctx: &Ctx, actor: &Actor, id: Uuid, note: String) -> Result<Category> {
-    update_category(ctx, actor, id, UpdateCategory { note: Some(note), ..Default::default() }).await
+    update_category(
+        ctx,
+        actor,
+        id,
+        UpdateCategory {
+            note: Some(note),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 /// Upsert a plan phase for `category_id` starting at `starts_month`.
@@ -236,11 +297,13 @@ pub async fn set_plan(
         return Err(invalid("amount_cents must be ≥ 0"));
     }
     get_category(ctx, category_id).await?;
-    let before = sqlx::query_as::<_, CategoryPlan>("select * from category_plans where category_id = $1 and starts_month = $2")
-        .bind(category_id)
-        .bind(starts_month.to_string())
-        .fetch_optional(&ctx.pool)
-        .await?;
+    let before = sqlx::query_as::<_, CategoryPlan>(
+        "select * from category_plans where category_id = $1 and starts_month = $2",
+    )
+    .bind(category_id)
+    .bind(starts_month.to_string())
+    .fetch_optional(&ctx.pool)
+    .await?;
     let after = sqlx::query_as::<_, CategoryPlan>(
         "insert into category_plans (category_id, starts_month, amount_cents, label, note) values ($1, $2, $3, $4, $5)
          on conflict (category_id, starts_month) do update set amount_cents = excluded.amount_cents,
@@ -254,7 +317,17 @@ pub async fn set_plan(
     .bind(&note)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "budget.set_plan", "category_plans", after.id, before.as_ref(), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "budget.set_plan",
+        "category_plans",
+        after.id,
+        before.as_ref(),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -267,8 +340,21 @@ pub async fn delete_plan(ctx: &Ctx, actor: &Actor, plan_id: Uuid) -> Result<()> 
     .fetch_optional(&ctx.pool)
     .await?
     .ok_or(Error::NotFound)?;
-    sqlx::query("delete from category_plans where id = $1").bind(plan_id).execute(&ctx.pool).await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "budget.delete_plan", "category_plans", plan_id, Some(&before), None::<&()>).await?;
+    sqlx::query("delete from category_plans where id = $1")
+        .bind(plan_id)
+        .execute(&ctx.pool)
+        .await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "budget.delete_plan",
+        "category_plans",
+        plan_id,
+        Some(&before),
+        None::<&()>,
+    )
+    .await?;
     Ok(())
 }
 
@@ -290,7 +376,10 @@ pub async fn actuals_for_month(ctx: &Ctx, month: Month) -> Result<HashMap<Option
 }
 
 /// Build the inputs the pure month view needs.
-pub async fn category_inputs(ctx: &Ctx, month: Month) -> Result<(Vec<GroupInput>, Vec<CategoryInput>, Cents)> {
+pub async fn category_inputs(
+    ctx: &Ctx,
+    month: Month,
+) -> Result<(Vec<GroupInput>, Vec<CategoryInput>, Cents)> {
     let groups = list_groups(ctx).await?;
     let cats = list_categories(ctx, false).await?;
     let plans = list_plans(ctx, None).await?;
@@ -298,7 +387,9 @@ pub async fn category_inputs(ctx: &Ctx, month: Month) -> Result<(Vec<GroupInput>
 
     let mut phases: HashMap<Uuid, Vec<PlanPhase>> = HashMap::new();
     for p in plans {
-        let Ok(m) = p.starts_month.parse::<Month>() else { continue };
+        let Ok(m) = p.starts_month.parse::<Month>() else {
+            continue;
+        };
         phases.entry(p.category_id).or_default().push(PlanPhase {
             starts_month: m,
             amount_cents: p.amount_cents,
@@ -307,7 +398,11 @@ pub async fn category_inputs(ctx: &Ctx, month: Month) -> Result<(Vec<GroupInput>
     }
     let group_inputs = groups
         .iter()
-        .map(|g| GroupInput { id: g.id, name: g.name.clone(), sort_order: g.sort_order })
+        .map(|g| GroupInput {
+            id: g.id,
+            name: g.name.clone(),
+            sort_order: g.sort_order,
+        })
         .collect();
     let cat_inputs = cats
         .iter()

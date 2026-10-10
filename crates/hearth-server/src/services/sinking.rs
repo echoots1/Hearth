@@ -9,27 +9,33 @@ use super::{Actor, Ctx, Error, Result, invalid, parse_month};
 use crate::db::models::{SinkingFund, SinkingFundItem};
 
 pub async fn list_funds(ctx: &Ctx) -> Result<Vec<SinkingFund>> {
-    Ok(sqlx::query_as::<_, SinkingFund>("select * from sinking_funds where household_id = $1 order by created_at")
-        .bind(ctx.household_id)
-        .fetch_all(&ctx.pool)
-        .await?)
+    Ok(sqlx::query_as::<_, SinkingFund>(
+        "select * from sinking_funds where household_id = $1 order by created_at",
+    )
+    .bind(ctx.household_id)
+    .fetch_all(&ctx.pool)
+    .await?)
 }
 
 pub async fn get_fund(ctx: &Ctx, id: Uuid) -> Result<SinkingFund> {
-    sqlx::query_as::<_, SinkingFund>("select * from sinking_funds where household_id = $1 and id = $2")
-        .bind(ctx.household_id)
-        .bind(id)
-        .fetch_optional(&ctx.pool)
-        .await?
-        .ok_or(Error::NotFound)
+    sqlx::query_as::<_, SinkingFund>(
+        "select * from sinking_funds where household_id = $1 and id = $2",
+    )
+    .bind(ctx.household_id)
+    .bind(id)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .ok_or(Error::NotFound)
 }
 
 pub async fn list_items(ctx: &Ctx, fund_id: Uuid) -> Result<Vec<SinkingFundItem>> {
     get_fund(ctx, fund_id).await?;
-    Ok(sqlx::query_as::<_, SinkingFundItem>("select * from sinking_fund_items where fund_id = $1 order by due_month, name")
-        .bind(fund_id)
-        .fetch_all(&ctx.pool)
-        .await?)
+    Ok(sqlx::query_as::<_, SinkingFundItem>(
+        "select * from sinking_fund_items where fund_id = $1 order by due_month, name",
+    )
+    .bind(fund_id)
+    .fetch_all(&ctx.pool)
+    .await?)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,11 +61,27 @@ pub async fn create_fund(ctx: &Ctx, actor: &Actor, c: CreateFund) -> Result<Sink
     .bind(c.funded_balance_cents)
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "sinking.create_fund", "sinking_funds", f.id, None::<&()>, Some(&f)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "sinking.create_fund",
+        "sinking_funds",
+        f.id,
+        None::<&()>,
+        Some(&f),
+    )
+    .await?;
     Ok(f)
 }
 
-pub async fn set_balance(ctx: &Ctx, actor: &Actor, fund_id: Uuid, balance: Cents, as_of: Option<DateTime<Utc>>) -> Result<SinkingFund> {
+pub async fn set_balance(
+    ctx: &Ctx,
+    actor: &Actor,
+    fund_id: Uuid,
+    balance: Cents,
+    as_of: Option<DateTime<Utc>>,
+) -> Result<SinkingFund> {
     let before = get_fund(ctx, fund_id).await?;
     let after = sqlx::query_as::<_, SinkingFund>(
         "update sinking_funds set funded_balance_cents = $3, balance_as_of = $4, updated_at = now() where household_id = $1 and id = $2 returning *",
@@ -70,7 +92,17 @@ pub async fn set_balance(ctx: &Ctx, actor: &Actor, fund_id: Uuid, balance: Cents
     .bind(as_of.unwrap_or(ctx.now))
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "sinking.set_balance", "sinking_funds", fund_id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "sinking.set_balance",
+        "sinking_funds",
+        fund_id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -86,7 +118,12 @@ pub struct UpsertItem {
     pub note: Option<String>,
 }
 
-pub async fn upsert_item(ctx: &Ctx, actor: &Actor, fund_id: Uuid, u: UpsertItem) -> Result<SinkingFundItem> {
+pub async fn upsert_item(
+    ctx: &Ctx,
+    actor: &Actor,
+    fund_id: Uuid,
+    u: UpsertItem,
+) -> Result<SinkingFundItem> {
     get_fund(ctx, fund_id).await?;
     if u.name.trim().is_empty() {
         return Err(invalid("name is required"));
@@ -102,12 +139,14 @@ pub async fn upsert_item(ctx: &Ctx, actor: &Actor, fund_id: Uuid, u: UpsertItem)
     let due = parse_month(&u.due_month)?;
     let before = match u.id {
         Some(id) => Some(
-            sqlx::query_as::<_, SinkingFundItem>("select * from sinking_fund_items where id = $1 and fund_id = $2")
-                .bind(id)
-                .bind(fund_id)
-                .fetch_optional(&ctx.pool)
-                .await?
-                .ok_or(Error::NotFound)?,
+            sqlx::query_as::<_, SinkingFundItem>(
+                "select * from sinking_fund_items where id = $1 and fund_id = $2",
+            )
+            .bind(id)
+            .bind(fund_id)
+            .fetch_optional(&ctx.pool)
+            .await?
+            .ok_or(Error::NotFound)?,
         ),
         None => None,
     };
@@ -143,40 +182,83 @@ pub async fn upsert_item(ctx: &Ctx, actor: &Actor, fund_id: Uuid, u: UpsertItem)
             .await?
         }
     };
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "sinking.upsert_item", "sinking_fund_items", after.id, before.as_ref(), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "sinking.upsert_item",
+        "sinking_fund_items",
+        after.id,
+        before.as_ref(),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
 pub async fn delete_item(ctx: &Ctx, actor: &Actor, fund_id: Uuid, item_id: Uuid) -> Result<()> {
     get_fund(ctx, fund_id).await?;
-    let before = sqlx::query_as::<_, SinkingFundItem>("select * from sinking_fund_items where id = $1 and fund_id = $2")
+    let before = sqlx::query_as::<_, SinkingFundItem>(
+        "select * from sinking_fund_items where id = $1 and fund_id = $2",
+    )
+    .bind(item_id)
+    .bind(fund_id)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .ok_or(Error::NotFound)?;
+    sqlx::query("delete from sinking_fund_items where id = $1")
         .bind(item_id)
-        .bind(fund_id)
-        .fetch_optional(&ctx.pool)
-        .await?
-        .ok_or(Error::NotFound)?;
-    sqlx::query("delete from sinking_fund_items where id = $1").bind(item_id).execute(&ctx.pool).await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "sinking.delete_item", "sinking_fund_items", item_id, Some(&before), None::<&()>).await?;
+        .execute(&ctx.pool)
+        .await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "sinking.delete_item",
+        "sinking_fund_items",
+        item_id,
+        Some(&before),
+        None::<&()>,
+    )
+    .await?;
     Ok(())
 }
 
 /// Advance a recurring item's due month by one cycle (after the bill posts).
-pub async fn advance_item(ctx: &Ctx, actor: &Actor, fund_id: Uuid, item_id: Uuid) -> Result<SinkingFundItem> {
+pub async fn advance_item(
+    ctx: &Ctx,
+    actor: &Actor,
+    fund_id: Uuid,
+    item_id: Uuid,
+) -> Result<SinkingFundItem> {
     get_fund(ctx, fund_id).await?;
-    let before = sqlx::query_as::<_, SinkingFundItem>("select * from sinking_fund_items where id = $1 and fund_id = $2")
-        .bind(item_id)
-        .bind(fund_id)
-        .fetch_optional(&ctx.pool)
-        .await?
-        .ok_or(Error::NotFound)?;
+    let before = sqlx::query_as::<_, SinkingFundItem>(
+        "select * from sinking_fund_items where id = $1 and fund_id = $2",
+    )
+    .bind(item_id)
+    .bind(fund_id)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .ok_or(Error::NotFound)?;
     let input = to_input(&before)?;
-    let next = sinking::advance_due_month(&input).ok_or_else(|| invalid("one-off items have no next due month"))?;
+    let next = sinking::advance_due_month(&input)
+        .ok_or_else(|| invalid("one-off items have no next due month"))?;
     let after = sqlx::query_as::<_, SinkingFundItem>("update sinking_fund_items set due_month = $2, updated_at = now() where id = $1 returning *")
         .bind(item_id)
         .bind(next.to_string())
         .fetch_one(&ctx.pool)
         .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "sinking.advance_item", "sinking_fund_items", item_id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "sinking.advance_item",
+        "sinking_fund_items",
+        item_id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -202,7 +284,11 @@ pub async fn view(ctx: &Ctx, fund_id: Uuid, month: Option<Month>) -> Result<Fund
     let fund = get_fund(ctx, fund_id).await?;
     let items = list_items(ctx, fund_id).await?;
     let inputs: Vec<SinkingItemInput> = items.iter().map(to_input).collect::<Result<_>>()?;
-    let view = sinking::fund_view(&inputs, fund.funded_balance_cents, month.unwrap_or_else(|| ctx.month()));
+    let view = sinking::fund_view(
+        &inputs,
+        fund.funded_balance_cents,
+        month.unwrap_or_else(|| ctx.month()),
+    );
     Ok(FundWithView { fund, view })
 }
 

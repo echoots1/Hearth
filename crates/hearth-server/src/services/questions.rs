@@ -66,7 +66,17 @@ pub async fn ask(ctx: &Ctx, actor: &Actor, a: AskQuestion) -> Result<Question> {
     .bind(a.notify.unwrap_or(true))
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "question.ask", "questions", q.id, None::<&()>, Some(&q)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "question.ask",
+        "questions",
+        q.id,
+        None::<&()>,
+        Some(&q),
+    )
+    .await?;
     Ok(q)
 }
 
@@ -85,7 +95,17 @@ pub async fn answer(ctx: &Ctx, actor: &Actor, id: Uuid, answer: String) -> Resul
     .bind(actor.display())
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "question.answer", "questions", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "question.answer",
+        "questions",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
@@ -96,14 +116,26 @@ pub async fn dismiss(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<Question> {
         .bind(id)
         .fetch_one(&ctx.pool)
         .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "question.dismiss", "questions", id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "question.dismiss",
+        "questions",
+        id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 
 pub async fn open_count(ctx: &Ctx) -> Result<i64> {
-    let (n,): (i64,) = sqlx::query_as("select count(*)::bigint from questions where household_id = $1 and status = 'open'")
-        .bind(ctx.household_id)
-        .fetch_one(&ctx.pool)
-        .await?;
+    let (n,): (i64,) = sqlx::query_as(
+        "select count(*)::bigint from questions where household_id = $1 and status = 'open'",
+    )
+    .bind(ctx.household_id)
+    .fetch_one(&ctx.pool)
+    .await?;
     Ok(n)
 }

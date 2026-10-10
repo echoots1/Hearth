@@ -4,6 +4,7 @@ use sqlx::PgExecutor;
 use super::{Actor, Result};
 
 /// Record a write. `before`/`after` are serialized snapshots (or `None`).
+#[allow(clippy::too_many_arguments)]
 pub async fn record<'e, B: Serialize, A: Serialize>(
     exec: impl PgExecutor<'e>,
     household_id: uuid::Uuid,
@@ -14,8 +15,14 @@ pub async fn record<'e, B: Serialize, A: Serialize>(
     before: Option<&B>,
     after: Option<&A>,
 ) -> Result<()> {
-    let before = before.map(serde_json::to_value).transpose().map_err(anyhow::Error::from)?;
-    let after = after.map(serde_json::to_value).transpose().map_err(anyhow::Error::from)?;
+    let before = before
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(anyhow::Error::from)?;
+    let after = after
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(anyhow::Error::from)?;
     sqlx::query(
         "insert into audit_log (household_id, actor_kind, actor_id, action, entity, entity_id, before, after)
          values ($1, $2, $3, $4, $5, $6, $7, $8)",

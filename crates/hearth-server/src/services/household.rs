@@ -7,9 +7,10 @@ use crate::db::models::Household;
 
 /// The single household row, created on first start if missing.
 pub async fn ensure(pool: &PgPool) -> Result<Household> {
-    if let Some(h) = sqlx::query_as::<_, Household>("select * from households order by created_at limit 1")
-        .fetch_optional(pool)
-        .await?
+    if let Some(h) =
+        sqlx::query_as::<_, Household>("select * from households order by created_at limit 1")
+            .fetch_optional(pool)
+            .await?
     {
         return Ok(h);
     }
@@ -25,10 +26,12 @@ pub async fn ensure(pool: &PgPool) -> Result<Household> {
 }
 
 pub async fn get(ctx: &Ctx) -> Result<Household> {
-    Ok(sqlx::query_as::<_, Household>("select * from households where id = $1")
-        .bind(ctx.household_id)
-        .fetch_one(&ctx.pool)
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Household>("select * from households where id = $1")
+            .bind(ctx.household_id)
+            .fetch_one(&ctx.pool)
+            .await?,
+    )
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -41,7 +44,8 @@ pub struct UpdateHousehold {
 pub async fn update(ctx: &Ctx, actor: &Actor, u: UpdateHousehold) -> Result<Household> {
     let before = get(ctx).await?;
     if let Some(tz) = &u.timezone {
-        tz.parse::<Tz>().map_err(|_| invalid(format!("unknown timezone {tz:?}")))?;
+        tz.parse::<Tz>()
+            .map_err(|_| invalid(format!("unknown timezone {tz:?}")))?;
     }
     if let Some(c) = &u.currency
         && c.len() != 3
@@ -58,7 +62,17 @@ pub async fn update(ctx: &Ctx, actor: &Actor, u: UpdateHousehold) -> Result<Hous
     .bind(u.currency.as_ref().map(|c| c.to_uppercase()))
     .fetch_one(&ctx.pool)
     .await?;
-    super::audit::record(&ctx.pool, ctx.household_id, actor, "household.update", "households", after.id, Some(&before), Some(&after)).await?;
+    super::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        actor,
+        "household.update",
+        "households",
+        after.id,
+        Some(&before),
+        Some(&after),
+    )
+    .await?;
     Ok(after)
 }
 

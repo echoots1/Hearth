@@ -110,5 +110,6 @@ pub fn clamp_limit(limit: Option<i64>) -> i64 {
 }
 
 pub fn parse_month(s: &str) -> Result<Month> {
-    s.parse().map_err(|e: hearth_core::calendar::MonthParseError| invalid(e.to_string()))
+    s.parse()
+        .map_err(|e: hearth_core::calendar::MonthParseError| invalid(e.to_string()))
 }

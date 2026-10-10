@@ -1,6 +1,9 @@
 //! Running estimate and projected low point, assembled from the database.
 
-use hearth_core::balance::{self, AccountEstimate, AccountForEstimate, CategoryForLowPoint, LowPoint, PlannedForLowPoint, TxnForEstimate};
+use hearth_core::balance::{
+    self, AccountEstimate, AccountForEstimate, CategoryForLowPoint, LowPoint, PlannedForLowPoint,
+    TxnForEstimate,
+};
 use hearth_core::money::Cents;
 use serde::Serialize;
 
@@ -35,7 +38,16 @@ pub async fn account_estimates(ctx: &Ctx) -> Result<Vec<AccountEstimate>> {
     .await?;
     let txns: Vec<TxnForEstimate> = rows
         .into_iter()
-        .map(|(account_id, date, amount_cents, pending, shadow)| TxnForEstimate { account_id, date, amount_cents, pending, deleted: false, shadow })
+        .map(
+            |(account_id, date, amount_cents, pending, shadow)| TxnForEstimate {
+                account_id,
+                date,
+                amount_cents,
+                pending,
+                deleted: false,
+                shadow,
+            },
+        )
         .collect();
     let today = ctx.today();
     Ok(accounts
@@ -77,9 +89,17 @@ pub async fn low_point(ctx: &Ctx, estimate: Cents) -> Result<LowPoint> {
     let planned: Vec<PlannedForLowPoint> = super::planned::outstanding(ctx)
         .await?
         .into_iter()
-        .map(|p| PlannedForLowPoint { id: p.id, item: p.item, date: p.date, amount_cents: p.amount_cents, outstanding: true })
+        .map(|p| PlannedForLowPoint {
+            id: p.id,
+            item: p.item,
+            date: p.date,
+            amount_cents: p.amount_cents,
+            outstanding: true,
+        })
         .collect();
-    Ok(balance::projected_low_point(estimate, today, payday, &cats, &planned))
+    Ok(balance::projected_low_point(
+        estimate, today, payday, &cats, &planned,
+    ))
 }
 
 pub async fn overview(ctx: &Ctx) -> Result<BalanceOverview> {
