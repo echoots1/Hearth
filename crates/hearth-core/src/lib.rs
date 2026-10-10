@@ -9,5 +9,13 @@
 //! - calendar dates are `chrono::NaiveDate` in the household timezone;
 //! - months are [`calendar::Month`] (`YYYY-MM`).
 
+pub mod alerts;
+pub mod balance;
+pub mod budget;
 pub mod calendar;
+pub mod debts;
 pub mod money;
+pub mod planned;
+pub mod rules;
+pub mod settings;
+pub mod sinking;

@@ -281,7 +281,7 @@ underlying fact changed (e.g. the amount).
 | `unplanned_large_charge` | spend transaction with `abs(amount) >= large_charge_threshold` and no matched planned item and category not flagged `note: "no large-charge alerts"` | `txn:<id>` | warn |
 | `canceled_service_charged` | transaction matches a `canceled_merchants` rule (rule with `action = 'flag_canceled'`) | `txn:<id>` | critical |
 | `category_blown` | `spent > plan` for a spend category in the current month | `cat:<id>:<month>` | warn |
-| `category_pace` | projected month-end spend (at current pace) > plan × 1.1 and day-of-month ≥ 10 | `cat:<id>:<month>` | info |
+| `category_pace` | projected month-end spend (at current pace) > plan × `pace_alert.ratio_pct`/100 (default 110%) and day-of-month ≥ `pace_alert.from_day` (default 10) | `cat:<id>:<month>` | info |
 | `floor_breached` | projected low point < `cash_floor_cents` | `floor:<month>` (amount refreshes detail) | critical |
 | `debt_redraw` | a debt's balance (via linked account) increased by more than its minimum payment since last sync | `debt:<id>:<as_of>` | warn |
 | `card_declined` | Privacy.com decline event | `decline:<external_id>` | warn |
