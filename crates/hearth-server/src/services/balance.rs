@@ -21,10 +21,12 @@ pub struct BalanceOverview {
 
 pub async fn account_estimates(ctx: &Ctx) -> Result<Vec<AccountEstimate>> {
     let accounts = super::accounts::list(ctx, false).await?;
-    // Only transactions since the oldest as-of can matter; pull those plus pending.
+    // Only transactions since the oldest anchor can matter; pull those plus
+    // pending. Either balance may anchor, so the oldest of both bounds it.
     let oldest = accounts
         .iter()
-        .filter_map(|a| a.reported_balance_as_of)
+        .flat_map(|a| [a.reported_balance_as_of, a.bank_balance_as_of])
+        .flatten()
         .min()
         .map(|t| hearth_core::calendar::local_date(ctx.tz, t))
         .unwrap_or(ctx.today());

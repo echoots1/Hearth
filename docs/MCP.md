@@ -107,7 +107,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `assistant.actions` | What the assistant changed in Driver mode, newest first, with undo availability. |
 | `assistant.work` | Everything waiting for the assistant in one call: transactions to categorize (with suggestions), answered questions since the last pass, pending proposals, open alerts, overdue bills, categories whose bills exceed their plan, stale balances, and the autonomy settings. |
 | `audit.list` | The audit log (every write with actor, before and after). |
-| `balance.overview` | Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, everyday pace, planned items) and headroom over the cash floor. |
+| `balance.overview` | Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, everyday pace, planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance. |
 | `bills.get` | One recurring bill with its splits. |
 | `bills.list` | Recurring bills (active by default) with monthly equivalents and category names. `upcoming` limits to bills due before the next payday. |
 | `budget.category` | One category in detail: its view for the month, its plan phases, the bills in it, and this month's transactions. |

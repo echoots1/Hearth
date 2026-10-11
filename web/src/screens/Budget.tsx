@@ -120,12 +120,15 @@ export function Budget() {
 function CashCard({ today, balance }: { today: Today; balance: BalanceOverview | undefined }) {
   const [open, setOpen] = useState(false);
   const lp = balance?.low_point ?? null;
-  const reported = balance?.accounts.filter((a) => a.include_in_cash) ?? [];
-  const oldest = reported.reduce<string | null>((acc, a) => {
-    if (!a.reported_balance_as_of) return acc;
-    return !acc || a.reported_balance_as_of < acc ? a.reported_balance_as_of : acc;
+  const cash = balance?.accounts.filter((a) => a.include_in_cash) ?? [];
+  // The oldest anchor (reported or bank-synced) across cash accounts is how stale the estimate is.
+  const oldest = cash.reduce<string | null>((acc, a) => {
+    if (!a.anchor_as_of) return acc;
+    return !acc || a.anchor_as_of < acc ? a.anchor_as_of : acc;
   }, null);
-  const bank = reported.filter((a) => a.bank_balance_cents != null);
+  const synced = cash.some((a) => a.anchor === "bank");
+  // The bank's figure is only a cross-check for accounts a person's reading anchors.
+  const bank = cash.filter((a) => a.anchor === "reported" && a.bank_balance_cents != null);
   const bankSum = bank.reduce((s, a) => s + (a.bank_balance_cents ?? 0), 0);
   const bankAge = bank.reduce<string | null>((acc, a) => (!acc || (a.bank_balance_as_of ?? "") > acc ? (a.bank_balance_as_of ?? acc) : acc), null);
   const headroom = balance ? (lp ? lp.low_point_cents : balance.household_estimate_cents) - balance.cash_floor_cents : 0;
@@ -136,10 +139,10 @@ function CashCard({ today, balance }: { today: Today; balance: BalanceOverview |
           <span className="text-faint text-[12px] font-bold tracking-[0.06em] uppercase">Cash now</span>
           <span className="text-[36px] leading-none font-extrabold tracking-[-0.03em]">{balance ? money(balance.household_estimate_cents) : "…"}</span>
           <span className="text-faint text-[12px] font-semibold">
-            {reported.length === 0
+            {cash.length === 0
               ? "no cash accounts yet"
               : oldest
-                ? `reported ${ago(oldest)}`
+                ? `${synced ? "updated" : "reported"} ${ago(oldest)}`
                 : "no balance reported yet"}
             {bank.length > 0 && ` · bank says ${dollars(bankSum)} (${ago(bankAge)})`}
           </span>
@@ -185,11 +188,15 @@ function UpdateBalancesSheet({ open, onClose, balance }: { open: boolean; onClos
   const accounts = balance?.accounts ?? [];
   return (
     <Sheet open={open} onClose={onClose} title="Update balances">
-      <p className="text-muted mb-3 text-[13px] font-semibold">Type what the bank shows right now. Hearth runs its estimate forward from here.</p>
+      <p className="text-muted mb-3 text-[13px] font-semibold">Type what the bank shows right now. Hearth runs its estimate forward from here. Synced accounts refresh on their own; a reading you type overrides the sync until the next one.</p>
       <div className="flex flex-col gap-3">
         {accounts.map((a) => (
-          <Field key={a.account_id} label={`${a.name}${a.reported_balance_as_of ? ` · reported ${ago(a.reported_balance_as_of)}` : ""}`} hint={`estimate now ${money(a.estimate_cents)}`}>
-            <MoneyInput value={values[a.account_id] ?? a.reported_balance_cents ?? null} onChange={(c) => setValues({ ...values, [a.account_id]: c })} allowNegative />
+          <Field
+            key={a.account_id}
+            label={`${a.name}${a.anchor_as_of ? ` · ${a.anchor === "bank" ? "bank" : "reported"} ${ago(a.anchor_as_of)}` : ""}`}
+            hint={`estimate now ${money(a.estimate_cents)}`}
+          >
+            <MoneyInput value={values[a.account_id] ?? a.anchor_balance_cents ?? null} onChange={(c) => setValues({ ...values, [a.account_id]: c })} allowNegative />
           </Field>
         ))}
         {accounts.length === 0 && <p className="text-muted text-[13px] font-semibold">Add an account under More → Accounts first.</p>}

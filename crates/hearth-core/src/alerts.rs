@@ -146,6 +146,8 @@ pub struct AccountSnapshot {
     pub name: String,
     pub include_in_cash: bool,
     pub reported_balance_as_of: Option<DateTime<Utc>>,
+    /// When a sync last refreshed the bank balance; keeps a synced account fresh.
+    pub bank_balance_as_of: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug)]
@@ -514,10 +516,13 @@ pub fn evaluate(s: &Snapshot) -> Vec<AlertCandidate> {
         }
     }
 
-    // ── stale reported balances ──
+    // ── stale balances (the newer of reported and bank-synced counts) ──
     for acct in s.accounts.iter().filter(|a| a.include_in_cash) {
         let age = acct
             .reported_balance_as_of
+            .into_iter()
+            .chain(acct.bank_balance_as_of)
+            .max()
             .map(|t| (s.now - t).num_days())
             .unwrap_or(i64::MAX);
         if age >= st.stale_balance_days {
@@ -527,9 +532,9 @@ pub fn evaluate(s: &Snapshot) -> Vec<AlertCandidate> {
                 format!("stale:{}:{}", acct.id, s.today),
                 format!("{} balance needs a fresh reading", acct.name),
                 if age == i64::MAX {
-                    format!("{} has never had a reported balance.", acct.name)
+                    format!("{} has never had a balance, reported or synced.", acct.name)
                 } else {
-                    format!("{} was last reported {} days ago.", acct.name, age)
+                    format!("{}'s balance is {} days old.", acct.name, age)
                 },
             );
             a.account_id = Some(acct.id);
@@ -882,18 +887,29 @@ mod tests {
                 name: "Checking".into(),
                 include_in_cash: true,
                 reported_balance_as_of: Some(s.now - chrono::Duration::days(8)),
+                bank_balance_as_of: None,
             },
             AccountSnapshot {
                 id: Uuid::new_v4(),
                 name: "Fresh".into(),
                 include_in_cash: true,
                 reported_balance_as_of: Some(s.now - chrono::Duration::days(1)),
+                bank_balance_as_of: None,
             },
             AccountSnapshot {
                 id: Uuid::new_v4(),
                 name: "Card".into(),
                 include_in_cash: false,
                 reported_balance_as_of: None,
+                bank_balance_as_of: None,
+            },
+            // Synced yesterday: fresh even though nobody has typed a balance in weeks.
+            AccountSnapshot {
+                id: Uuid::new_v4(),
+                name: "Synced".into(),
+                include_in_cash: true,
+                reported_balance_as_of: Some(s.now - chrono::Duration::days(20)),
+                bank_balance_as_of: Some(s.now - chrono::Duration::days(1)),
             },
         ];
         s.sources = vec![
