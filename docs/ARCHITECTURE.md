@@ -163,7 +163,7 @@ later it is a separate small service that talks to the same MCP surface.
   household timezone; months are `YYYY-MM`; every write is audited with the
   actor (user, API key, or job).
 
-## 6. Data model — proposed
+## 6. Data model — ✓ decided
 
 PostgreSQL. One household. Money `bigint` cents; dates `date` in the
 household timezone; months `YYYY-MM`; instants `timestamptz`; uuid keys;
@@ -203,75 +203,132 @@ comparison and what-ifs; goal projections; pace.
 
 ## 7. Jobs and automation — proposed
 
-In-process scheduler (no external cron), Postgres advisory lock per job,
-`job_runs` history, run-now from Settings or MCP.
+In-process scheduler (no external cron). Each job takes a Postgres advisory
+lock so two containers never run it at once, records a `job_runs` row with a
+summary, and can be run on demand from Settings or the `jobs.run` MCP tool.
+Intervals are env-configurable; the defaults:
 
 | Job | Interval | May do | May not do |
 | --- | --- | --- | --- |
-| sync:plaid / sync:privacy | 60 / 10 min | upsert transactions, balances, declines | categorize beyond rules |
-| process | after sync, 5 min | apply rules, match recurring bills and planned items, advance due dates, queue review | guess a category |
-| evaluate | 15 min | raise/refresh alerts by dedupe key; note debt/goal milestones (a debt paid off, a goal reached, payoff date slipped) | resolve or ack |
-| notify | 1 min | send, nag, respect quiet hours | interpret replies |
-| housekeeping | daily | prune runs, sessions, old deliveries | touch money data |
+| `sync:plaid` | 60 min | fetch transactions since cursor, upsert by external id (pending → posted in place), refresh bank balances, soft-delete removed rows | categorize, touch notes |
+| `sync:privacy` | 10 min | fetch card transactions and declines, upsert, write decline events | categorize |
+| `process` | after any sync, and every 5 min | apply rules to new rows; match rows to recurring bills (advance `next_due`, note amount drift) and planned items (mark done); shadow-link bank rows that duplicate card rows; queue the rest for review | guess a category, create a bill, change a plan |
+| `evaluate` | 15 min | recompute month view and low point; raise or refresh alerts by dedupe key; note milestones (debt paid off, goal reached, payoff date slipped) | resolve, ack, or snooze an alert |
+| `notify` | 1 min | send new alerts and open questions/proposals over the enabled channels; nag unacknowledged alerts on the schedule; honor quiet hours (critical may override) | interpret a reply |
+| `housekeeping` | daily | prune old job runs, expired sessions, dead push subscriptions, delivered notification rows | touch money data |
 
-Alert catalogue (each with a dedupe key and default severity): unplanned
-large charge, canceled bill charged, bill amount changed (a recurring bill
-posts for noticeably more than its amount), bill not seen (past due, no
-matching charge), category blown, category pace, cash floor breached, debt
-redraw, card declined, planned item not seen, stale balance, sync failing,
-review backlog. Category notes may carry three
-literal tokens jobs honor: `[no-alerts]`, `[no-large-charge]`, `[no-pace]`.
+**Alert catalogue.** Each has a dedupe key so re-running never duplicates
+it, and a default severity:
+
+| Alert | Fires when | Severity |
+| --- | --- | --- |
+| unplanned large charge | spend ≥ threshold, no planned item or bill match, category not opted out | warn |
+| canceled bill charged | a charge matches a bill with status canceled | critical |
+| bill amount changed | a bill matches but posts more than its amount by > tolerance | warn |
+| bill not seen | a bill is past `next_due` by > N days with no match | info |
+| category blown | spent > plan this month | warn |
+| category pace | projected month-end > plan × ratio, after day N | info |
+| cash floor breached | projected low point < cash floor | critical |
+| debt redraw | a linked debt's balance rose by more than its minimum | warn |
+| card declined | a Privacy.com decline event | warn |
+| planned item not seen | a planned item is past date by > N days with no match | info |
+| stale balance | a cash account's reported balance is older than N days | info |
+| sync failing | a source has failed N runs in a row | warn |
+| review backlog | > N uncategorized rows older than M days | info |
+| milestone | a debt hits zero, a goal is reached, or a payoff date moves by > 1 month | info |
+
+Category notes may carry three literal tokens the jobs honor: `[no-alerts]`,
+`[no-large-charge]`, `[no-pace]`. Everything else in a note is for the
+assistant.
+
+**The line.** Jobs detect and compute; they never decide. No job
+categorizes an ambiguous transaction, creates or edits a bill, changes a
+plan, switches a debt strategy, or resolves an alert. Those are people, or
+the assistant within its autonomy setting.
 
 ## 8. AI / MCP surface — proposed
 
-Endpoint `/mcp` (Streamable HTTP), bearer API key created in Settings with
-`read` or `read_write` scope. Tools are thin wrappers over the same services
-the UI uses, named `<noun>.<verb>`, money as `*_cents`, dates ISO.
+**Transport and auth.** Streamable HTTP at `/mcp`, bearer API key created in
+Settings with `read` or `read_write` scope; keys are hashed, shown once,
+revocable. Tools are thin wrappers over the same services the UI uses, so
+the assistant and the screen never disagree about a number. Names are
+`<noun>.<verb>`; money is `*_cents` integers; dates are ISO strings; list
+tools paginate.
 
-Reads: budget month view, category, balance overview (estimate + low point
-with components), transactions and review queue, recurring bills (upcoming,
-by category, canceled), planned, sinking, debts (+ projection under each strategy, strategy
-comparison, what-if for an extra payment or a new charge), goals (+
-projection), alerts, questions, settings, "today".
-Writes: categorize, set note, create manual transaction, apply rules,
-create rule, set plan phase, **add / update / cancel / pause a recurring
-bill**, create/update planned item, set reported balance, set sinking-fund
-balance, upsert debt, set debt strategy and extra payment, create/update a
-goal, ack/resolve/snooze alert, ask/answer/dismiss question,
-allow-listed settings.
+**Reads** (always allowed with any key):
 
-Planning tools are designed for one-sentence requests: `bills.add` takes
-name, amount, cadence, next due, and optional category/account/pattern, and
-returns what it created plus any plan it raised, so the assistant can
-confirm in one line. When a category is ambiguous the assistant asks (a
-question), it does not guess.
+| Group | Tools |
+| --- | --- |
+| household | `household.today` (date, month, days left, next payday, autonomy setting), `household.settings` |
+| budget | `budget.month` (groups → categories: plan, spent, left, pace, next phase; totals), `budget.category` (detail + this month's transactions + bills in it) |
+| balance | `balance.overview` (per-account estimate with ages, household cash, low point with its components, headroom over floor) |
+| transactions | `transactions.list` (filters), `transactions.get`, `transactions.review_queue` |
+| bills | `bills.list` (active / paused / canceled, upcoming before payday, by category), `bills.get` |
+| planned | `planned.list` |
+| sinking | `sinking.overview` (funded, should-have, set-aside, per bill) |
+| debts | `debts.list` (+ interest/day), `debts.compare` (avalanche / snowball / custom: payoff month, total interest), `debts.what_if` (extra monthly amount, or a one-time charge → delta months and dollars) |
+| goals | `goals.list`, `goals.project` (reach date at current pace; pace for a target date) |
+| alerts | `alerts.list`, `alerts.get` |
+| questions | `questions.list` (open questions and proposals, with answers) |
+| rules, accounts | `rules.list`, `accounts.list` |
+| jobs | `jobs.status` |
 
-**Assistant autonomy is a household setting with two positions.**
+**Writes** (need `read_write`, and pass through the autonomy switch):
 
-- **Backseat** (suggest): the assistant's write tools don't change data
-  directly; each call becomes a *proposal* in the Activity inbox with the
-  exact change spelled out and an Approve button. Reads are unrestricted.
-- **Driver** (act): write tools apply immediately. Every change shows in
-  Activity as "Claude did …" with the before/after and, where it makes
-  sense, an Undo. Nothing is hidden; the audit log is the record.
+| Area | Tools |
+| --- | --- |
+| categorizing & notes | `transactions.categorize`, `transactions.set_note`, `transactions.link_planned`, `transactions.create_manual`, `transactions.apply_rules`, `rules.create`, `rules.update`, `rules.delete`, `budget.set_category_note`, `budget.create_category`, `budget.update_category` |
+| plans & bills | `budget.set_plan` (phase upsert), `bills.add`, `bills.update`, `bills.cancel`, `bills.pause`, `bills.split` (only on a person's request), `planned.create`, `planned.update`, `planned.set_status`, `sinking.set_balance` |
+| debts & goals | `debts.upsert`, `debts.set_balance`, `debts.set_strategy` (kind, order, extra payment), `goals.create`, `goals.update` |
+| cash | `balance.set_reported` (per account; what the humans report in chat) |
+| alerts & questions | `alerts.ack`, `alerts.resolve`, `alerts.snooze`, `questions.ask`, `questions.answer`, `questions.dismiss` |
+| settings | `household.update_settings` (allow-listed keys; never the autonomy setting) |
+| jobs | `jobs.run` |
 
-The switch is global with per-area overrides, so you can let the assistant
-drive categorizing and notes while keeping plan amounts, bills, and debt
-strategy on backseat (the proposed default). Changing the setting is itself
-a UI-only action; the assistant cannot promote itself. Either way, "can we
-buy X?" answers are reads and always work.
+**Assistant autonomy: Backseat / Driver.** A household setting with one
+global position and overrides per area (categorizing & notes · plans & bills
+· debts & goals). Ack/resolve/snooze and questions always apply directly;
+they are the assistant acting as the humans' hands on the inbox.
 
-Forecasting tools return the numbers for every option, not a pick:
-`debts.compare` gives payoff month and total interest for avalanche,
-snowball, and custom; `debts.what_if` takes an extra monthly amount or a
-one-time charge and returns the delta in months and dollars; `goals.project`
-returns the reach date at current pace and the pace for a target date. The
-assistant recommends; in Driver mode it may apply the strategy change, and
-the change is visible and undoable in Activity.
+- **Backseat (suggest):** a write tool does not change data. It records a
+  *proposal* (a question of kind `proposal` carrying the tool and
+  arguments) and returns it. The proposal appears in the Activity inbox
+  and in notifications with the exact change spelled out; Approve runs
+  it, Edit lets a person adjust the arguments first, Decline closes it.
+- **Driver (act):** the write applies immediately and is recorded in
+  `assistant_actions` with before, after, and the inverse call. Activity
+  shows "Claude did …" with Undo where an inverse exists (categorize, note,
+  plan amount, strategy, bill pause/cancel; adding a bill is undone by
+  canceling it).
+- The setting is UI-only; no tool can change it. `household.today` tells
+  the assistant which position it is in so it can say "I've proposed…"
+  versus "I've set…".
+- Proposed default: Driver for categorizing & notes, Backseat for plans &
+  bills and for debts & goals.
 
-"Can we buy X?" = `balance.get` (cash check) → `budget.get_month` (category
-check) → `planned.list` / `debts.delay_cost` (plan check) → YES / NOT NOW /
-NO, optionally `planned.create` on YES.
+**Planning by sentence.** `bills.add` takes name, amount, cadence, next due,
+and optional category, account, pattern; it returns what it created, the
+category's new bill total, and whether the plan now falls short, so the
+assistant can confirm in one line or follow with `budget.set_plan`. When the
+category is ambiguous the assistant asks (a question), it does not guess.
+
+**Forecasting.** The app computes every option; the assistant recommends.
+`debts.compare` and `debts.what_if` return numbers, not a pick. A strategy
+change goes through `debts.set_strategy`, which obeys the autonomy switch
+like any other write.
+
+**"Can we buy X?"** is three reads and a verdict:
+1. `balance.overview` → is `low_point − X ≥ cash_floor`? (cash check)
+2. `budget.month` → does the category have `left ≥ X`, or does the next
+   phase cover it? (category check)
+3. `planned.list` for the item, `debts.what_if` if it would go on a card,
+   `bills.list` if it is really a recurring thing (plan check)
+4. YES / NOT NOW / NO, optionally `planned.create` on YES so the charge is
+   pre-approved when it posts. The verdict is recorded as an answered
+   question so it is auditable.
+
+Full tool reference with schemas will live in `docs/MCP.md` once the tools
+exist.
 
 ## 9. UI — ✓ decided (concept)
 
