@@ -21,3 +21,5 @@ pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     MIGRATOR.run(pool).await.context("running migrations")?;
     Ok(())
 }
+
+pub mod models;
