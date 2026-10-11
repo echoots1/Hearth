@@ -137,6 +137,8 @@ pub struct SyncSummary {
     pub added: usize,
     pub modified: usize,
     pub removed: usize,
+    /// $0 rows (verification holds, released authorizations), not stored.
+    pub ignored: usize,
     pub accounts_updated: usize,
     pub pages: usize,
 }
@@ -250,8 +252,10 @@ async fn sync_inner(
                 pending: t.pending,
                 raw: None,
             };
-            super::transactions::upsert_incoming(ctx, &inc).await?;
-            if modified {
+            let outcome = super::transactions::upsert_incoming(ctx, &inc).await?;
+            if outcome == super::transactions::UpsertOutcome::Ignored {
+                summary.ignored += 1;
+            } else if modified {
                 summary.modified += 1;
             } else {
                 summary.added += 1;

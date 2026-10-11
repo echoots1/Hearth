@@ -19,6 +19,8 @@ pub struct SyncSummary {
     pub updated: usize,
     pub declines: usize,
     pub voided: usize,
+    /// $0 charges (card verifications), not stored.
+    pub ignored: usize,
     /// Rows and declines moved here from card accounts of earlier versions.
     pub rehomed: usize,
 }
@@ -222,10 +224,10 @@ pub async fn sync(
                 "status": t.status,
             })),
         };
-        let (_, outcome) = super::transactions::upsert_incoming(ctx, &inc).await?;
-        match outcome {
+        match super::transactions::upsert_incoming(ctx, &inc).await? {
             super::transactions::UpsertOutcome::Inserted => s.inserted += 1,
             super::transactions::UpsertOutcome::Updated => s.updated += 1,
+            super::transactions::UpsertOutcome::Ignored => s.ignored += 1,
             super::transactions::UpsertOutcome::Unchanged => {}
         }
     }

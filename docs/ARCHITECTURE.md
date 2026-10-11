@@ -109,6 +109,10 @@ All optional, all behind environment variables; absent config = disabled.
   from) the moment it happens, and the bank's own `PwP*…` line for it, a few
   days later, is paired as the card row's shadow so the budget and the cash
   estimate count each charge once.
+- **$0 rows are ignored** on every path in. Card networks send them for
+  verification holds and released authorizations; they are not spending.
+  Manual entry and CSV import refuse them, and the syncs drop them without
+  storing a row (a pending charge that later resolves to $0 is removed).
 - **CSV import**: column mapping with saved presets, fingerprint dedup,
   per-import rollback.
 - **Manual entry** in the UI and by chat.
@@ -217,8 +221,8 @@ Intervals are env-configurable; the defaults:
 
 | Job | Interval | May do | May not do |
 | --- | --- | --- | --- |
-| `sync:plaid` | 60 min | fetch transactions since cursor, upsert by external id (pending → posted in place), refresh bank balances, soft-delete removed rows | categorize, touch notes |
-| `sync:privacy` | 10 min | fetch card charges and declines, upsert charges onto the funding account, write decline events | categorize |
+| `sync:plaid` | 60 min | fetch transactions since cursor, upsert by external id (pending → posted in place), refresh bank balances, soft-delete removed and $0 rows | categorize, touch notes |
+| `sync:privacy` | 10 min | fetch card charges and declines, upsert charges onto the funding account (dropping $0 ones), write decline events | categorize |
 | `process` | after any sync, and every 5 min | pair the bank's `PwP` lines with card charges (shadow links); apply rules to new rows; match rows to recurring bills (advance `next_due`, note amount drift) and planned items (mark done); queue the rest for review | guess a category, create a bill, change a plan |
 | `evaluate` | 15 min | recompute month view and low point; raise or refresh alerts by dedupe key; note milestones (debt paid off, goal reached, payoff date slipped) | resolve, ack, or snooze an alert |
 | `notify` | 1 min | send new alerts and open questions/proposals over the enabled channels; nag unacknowledged alerts on the schedule; honor quiet hours (critical may override) | interpret a reply |
