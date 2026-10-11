@@ -246,7 +246,7 @@ categorizes an ambiguous transaction, creates or edits a bill, changes a
 plan, switches a debt strategy, or resolves an alert. Those are people, or
 the assistant within its autonomy setting.
 
-## 8. AI / MCP surface — proposed
+## 8. AI / MCP surface — ✓ decided
 
 **Transport and auth.** Streamable HTTP at `/mcp`, bearer API key created in
 Settings with `read` or `read_write` scope; keys are hashed, shown once,
@@ -259,7 +259,8 @@ tools paginate.
 
 | Group | Tools |
 | --- | --- |
-| household | `household.today` (date, month, days left, next payday, autonomy setting), `household.settings` |
+| household | `household.today` (date, month, days left, next payday, autonomy setting, assistant mode), `household.settings` |
+| assistant | `assistant.work` (everything waiting for the assistant, in one call, with suggestions), `assistant.summary_write` (leave a short report of a pass that shows in Activity) |
 | budget | `budget.month` (groups → categories: plan, spent, left, pace, next phase; totals), `budget.category` (detail + this month's transactions + bills in it) |
 | balance | `balance.overview` (per-account estimate with ages, household cash, low point with its components, headroom over floor) |
 | transactions | `transactions.list` (filters), `transactions.get`, `transactions.review_queue` |
@@ -343,15 +344,34 @@ reach dates. Accounts, rules, settings, users, API keys, integrations and
 jobs live under More. Later phase: a net-worth view on the Goals tab. Warm stone neutrals, one typeface, orange =
 attention, blue = income.
 
-## 10. Security and privacy — proposed
+## 10. Security and privacy — ✓ decided
 
-Local auth (argon2id, DB-backed sessions, httpOnly cookie, owner/member
-roles); first run creates the owner. API keys hashed, shown once. Plaid
-tokens encrypted with an app key. VAPID keys generated on first run and
-stored encrypted; push subscriptions tied to a user. Signed, expiring ack
-tokens for notification actions and email links. Rate limits on
-login and MCP. OIDC later. The repo never contains real names, balances,
-institutions or people; seed data is obviously fake.
+- **Local auth.** Email + password (argon2id), DB-backed sessions in an
+  httpOnly cookie, owner and member roles; the first visit creates the
+  owner. OIDC is a later option, not v1.
+- **API keys** for MCP: hashed at rest, shown once, `read` or `read_write`
+  scope, revocable, last-used tracked.
+- **Secrets at rest.** Plaid access tokens, the optional Anthropic API key,
+  and VAPID private keys are encrypted with an app key from the environment;
+  rotating it requires a documented re-encrypt step. Nothing secret is ever
+  returned by the API or MCP.
+- **Spend control.** API mode has a monthly cap and per-call usage logging;
+  the pass job stops when the cap is reached and raises an info alert.
+- **Notification actions** use per-alert signed, expiring tokens, so a tap
+  on a push button acknowledges without a login prompt and can't be replayed
+  against another alert.
+- **Rate limits** on login and `/mcp`. Reverse-proxy headers trusted only
+  when configured.
+- **Audit everything.** Every write records the actor (user, API key, job,
+  assistant), before and after. The assistant's actions are additionally
+  listed in Activity with Undo.
+- **Nothing leaves the box** except what enabled integrations need: Plaid
+  and Privacy.com calls, push deliveries, and (API mode only) the context
+  sent to Claude, which is the household's budget data. The setup guide
+  says this plainly next to the toggle.
+- **Public repo hygiene.** No real names, balances, institutions or people
+  anywhere in the repository; seed and test data are obviously fake;
+  `.env.example` has every setting and no values.
 
 ## 11. Open questions
 
@@ -367,5 +387,6 @@ institutions or people; seed data is obviously fake.
 | 8 | Do yearly bills live in a category too? | **Decided:** yes. A yearly/quarterly bill posts to its category in the month it hits; the saving for all of them shows as one "Sinking fund" row on the Budget, with the per-bill breakdown on the Plan tab. |
 | 9 | Who suggests, who acts? | **Decided:** the app computes every option's numbers; the assistant recommends. Whether it may also *apply* a change is the Backseat / Driver setting in §8, per area, default Driver for categorizing and notes, Backseat for plans, bills, and strategy. |
 | 12 | Phone app path | **Decided:** PWA + Web Push only; no APK or native client. Requires HTTPS on `APP_URL` (already assumed behind the reverse proxy). |
+| 13 | Assistant mode | **Decided:** Pull mode (MCP + a recurring task in the Claude app) is the default and free; API mode is an opt-in toggle with the instance owner's own key and a spend cap. Setup guide documents both. |
 | 11 | Undo | Proposed: changes made by the assistant in Driver mode get an Undo in Activity for categorize, note, plan amount, and strategy; adding a bill is reversed by canceling it. Undo is a new audited write, not a rollback. |
 | 10 | Wealth building scope | Phase 2: net worth from balance snapshots, investment accounts with manually reported balances, contribution tracking. No brokerage sync or market data in scope yet. |

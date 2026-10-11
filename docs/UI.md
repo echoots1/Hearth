@@ -115,7 +115,9 @@ Getting out of debt, then building savings; same card language.
 
 Accounts, rules, settings, users, API keys, integrations, jobs.
 
-**Settings → Assistant** has the Backseat / Driver switch: one global
+**Settings → Assistant** has the mode toggle (Pull: Claude app + recurring
+task, the default; API: paste your own key, pick models per task, set a
+monthly cap, see usage) and the Backseat / Driver switch: one global
 position and per-area overrides (categorizing & notes · plans & bills ·
 debt strategy & goals), each with a one-line description of what the
 assistant may do in that position.
