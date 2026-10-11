@@ -176,9 +176,79 @@ pub(crate) fn json<T: serde::Serialize>(v: &T) -> Option<Value> {
     serde_json::to_value(v).ok()
 }
 
+/// Marker lines that bracket the generated section of `docs/MCP.md`.
+pub const REFERENCE_BEGIN: &str = "<!-- BEGIN GENERATED: hearth tools -->";
+pub const REFERENCE_END: &str = "<!-- END GENERATED -->";
+
+/// The tool reference as Markdown: one table of reads, one of writes, then
+/// every tool's input schema. `hearth tools` prints it; a test keeps
+/// `docs/MCP.md` in step with it.
+pub fn reference_markdown() -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "{REFERENCE_BEGIN}");
+    let _ = writeln!(
+        out,
+        "\n_Generated from the registry by `hearth tools`; do not edit by hand._\n"
+    );
+    for (title, writes) in [("Reads", false), ("Writes", true)] {
+        let _ = writeln!(out, "### {title}\n");
+        if writes {
+            let _ = writeln!(out, "| Tool | Area | Description |\n| --- | --- | --- |");
+        } else {
+            let _ = writeln!(out, "| Tool | Description |\n| --- | --- |");
+        }
+        for t in all().filter(|t| t.writes == writes) {
+            let desc = t.description.replace('|', "\\|");
+            if writes {
+                let area = t
+                    .area
+                    .and_then(|a| serde_json::to_value(a).ok())
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "always applies".to_string());
+                let _ = writeln!(out, "| `{}` | {} | {} |", t.name, area, desc);
+            } else {
+                let _ = writeln!(out, "| `{}` | {} |", t.name, desc);
+            }
+        }
+        let _ = writeln!(out);
+    }
+    let _ = writeln!(out, "### Input schemas\n");
+    for t in all() {
+        let mut schema = t.schema();
+        if let Value::Object(m) = &mut schema {
+            m.remove("$schema");
+            m.remove("title");
+        }
+        let _ = writeln!(
+            out,
+            "<details><summary><code>{}</code></summary>\n\n```json\n{}\n```\n\n</details>\n",
+            t.name,
+            serde_json::to_string_pretty(&schema).unwrap_or_default()
+        );
+    }
+    let _ = writeln!(out, "{REFERENCE_END}");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `docs/MCP.md` carries the generated reference between the markers.
+    #[test]
+    fn docs_match_registry() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/MCP.md");
+        let doc = std::fs::read_to_string(path).expect("docs/MCP.md exists");
+        let start = doc.find(REFERENCE_BEGIN).expect("begin marker");
+        let end = doc.find(REFERENCE_END).expect("end marker") + REFERENCE_END.len();
+        let current = doc[start..end].trim_end();
+        let expected = reference_markdown();
+        assert!(
+            current == expected.trim_end(),
+            "docs/MCP.md is out of date: run `cargo run -p hearth-server -- tools` and paste the output between the markers (or `scripts/gen-mcp-docs.sh`)"
+        );
+    }
 
     #[test]
     fn registry_is_well_formed() {
