@@ -98,6 +98,8 @@ transaction, never resolves an alert, never changes a plan.
 
 All optional, all behind environment variables; absent config = disabled.
 
+### Data in
+
 - **Plaid** (developer tier): Link flow, `/transactions/sync` with cursors,
   balances treated as possibly stale and always labeled by age. Access
   tokens encrypted at rest.
@@ -106,18 +108,64 @@ All optional, all behind environment variables; absent config = disabled.
   charges are linked as shadows so the budget counts each charge once.
 - **CSV import**: column mapping with saved presets, fingerprint dedup,
   per-import rollback.
-- **Notifications**: ntfy and SMTP behind one interface; ack via action
-  button or signed link; quiet hours; nag schedule.
-- **MCP**: first-class; see §8.
+- **Manual entry** in the UI and by chat.
+
+### The app on your phone
+
+Hearth is an **installable web app (PWA)**, and the phone build is a thin
+shell around it rather than a second codebase:
+
+- The web UI ships a manifest and a service worker, so "Add to Home Screen"
+  on Android or iOS gives a full-screen app with its own icon and splash,
+  offline shell, and **Web Push** notifications that arrive with the app
+  closed. Push uses VAPID keys the server generates on first run; no
+  Firebase project or Google account is needed on the Hearth side. (On
+  Android the browser routes delivery through its own push service; on iOS
+  push works once the app is on the home screen.)
+- For people who want a real **APK to sideload**, the repo includes a
+  Trusted Web Activity (TWA) wrapper built with Bubblewrap: a few hundred
+  lines of generated Android project that opens the PWA in a full-screen
+  Chrome engine with no browser chrome. The server serves
+  `/.well-known/assetlinks.json` with the APK's signing fingerprint (an env
+  setting) so the URL bar disappears. CI builds the APK as an artifact; no
+  Play Store.
+- Why not a native app with a WebView and FCM: it means a Firebase account,
+  a second notification path to maintain, and a codebase that drifts from
+  the web UI. The TWA route gives the same feel with one UI and one
+  notification path. If a native client is ever wanted, the API and MCP
+  surface are already there for it.
+
+### Notifications out
+
+One `Notifier` interface, three channels, any combination on:
+
+- **Web Push** (default, built in): rich notifications with action buttons
+  (Acknowledge, Snooze, Open) handled by the service worker, which calls
+  the API with a per-alert signed token so acknowledging never needs a
+  login prompt.
+- **ntfy**: for households already running it or wanting a desktop path;
+  action buttons via ntfy actions.
+- **Email (SMTP)**: digest-friendly; acknowledge via signed link.
+
+Quiet hours and the nag schedule apply across channels; a critical alert can
+override quiet hours. Every delivery is logged.
+
+### Talking to the assistant
+
+Over MCP from the Claude app (desktop or mobile): no extra channel to run.
+A chat bridge (Telegram, Discord, SMS) is out of scope for v1; if wanted
+later it is a separate small service that talks to the same MCP surface.
 
 ## 5. Stack and deployment — ✓ decided
 
 - **Backend: Rust.** Axum on Tokio; sqlx on PostgreSQL 16 with embedded SQL
   migrations; `rmcp` for the MCP server; `reqwest` clients for Plaid and
-  Privacy.com; `lettre` for SMTP. One static binary, small image, strong
+  Privacy.com; `web-push` for push delivery; `lettre` for SMTP. One static binary, small image, strong
   types around money.
 - **UI: TypeScript.** Vite + React + Tailwind, mobile-first, built to static
-  files and embedded in the binary.
+  files and embedded in the binary. Ships as a PWA (manifest, service
+  worker, Web Push) and optionally as a TWA APK generated with Bubblewrap
+  from `android/`.
 - **Packaging:** one Docker image plus Postgres in `docker-compose.yml`;
   runs behind any reverse proxy; migrations run on start.
 - **Conventions:** money is integer cents (`bigint` / `i64`, never a float;
@@ -223,7 +271,9 @@ attention, blue = income.
 
 Local auth (argon2id, DB-backed sessions, httpOnly cookie, owner/member
 roles); first run creates the owner. API keys hashed, shown once. Plaid
-tokens encrypted with an app key. Signed, expiring ack links. Rate limits on
+tokens encrypted with an app key. VAPID keys generated on first run and
+stored encrypted; push subscriptions tied to a user. Signed, expiring ack
+tokens for notification actions and email links. Rate limits on
 login and MCP. OIDC later. The repo never contains real names, balances,
 institutions or people; seed data is obviously fake.
 
@@ -240,5 +290,6 @@ institutions or people; seed data is obviously fake.
 | 7 | One bill → one category, or can a bill split? | **Decided:** one category by default; a bill can be split across categories only when a person asks for it (by chat or in the form), never on the assistant's own initiative. |
 | 8 | Do yearly bills live in a category too? | **Decided:** yes. A yearly/quarterly bill posts to its category in the month it hits; the saving for all of them shows as one "Sinking fund" row on the Budget, with the per-bill breakdown on the Plan tab. |
 | 9 | Who suggests, who acts? | **Decided:** the app computes every option's numbers; the assistant recommends. Whether it may also *apply* a change is the Backseat / Driver setting in §8, per area, default Driver for categorizing and notes, Backseat for plans, bills, and strategy. |
+| 12 | Phone app path | Proposed: PWA + Web Push as the baseline, TWA APK for sideloading, no native WebView/FCM app. Requires HTTPS on `APP_URL` (already assumed behind the reverse proxy). |
 | 11 | Undo | Proposed: changes made by the assistant in Driver mode get an Undo in Activity for categorize, note, plan amount, and strategy; adding a bill is reversed by canceling it. Undo is a new audited write, not a rollback. |
 | 10 | Wealth building scope | Phase 2: net worth from balance snapshots, investment accounts with manually reported balances, contribution tracking. No brokerage sync or market data in scope yet. |
