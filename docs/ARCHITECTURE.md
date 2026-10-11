@@ -163,14 +163,43 @@ later it is a separate small service that talks to the same MCP surface.
   household timezone; months are `YYYY-MM`; every write is audited with the
   actor (user, API key, or job).
 
-## 6. Data model — proposed outline
+## 6. Data model — proposed
 
-Detailed in `docs/DATA-MODEL.md` once §2 is decided. Tables, one per noun in
-§2 plus: `households`, `users`, `sessions`, `api_keys`, `settings` (k/v,
-typed in code), `category_groups`, `balance_snapshots`, `import_batches`,
-`card_events`, `notifications`, `job_runs`, `audit_log`. Dedup: unique
-`(source, external_id)` for synced rows; unique `(account, fingerprint)` for
-CSV and manual rows. Soft delete only on transactions.
+PostgreSQL. One household. Money `bigint` cents; dates `date` in the
+household timezone; months `YYYY-MM`; instants `timestamptz`; uuid keys;
+`created_at`/`updated_at` everywhere. Full column-level detail goes in
+`docs/DATA-MODEL.md` once this section is decided.
+
+| Table | Key fields | Notes |
+| --- | --- | --- |
+| `households` | name, timezone, currency | exactly one row |
+| `users`, `sessions`, `api_keys` | email, argon2id hash, role; session id + expiry; key prefix + hash + scope | local auth; keys hashed, shown once |
+| `settings` | key, jsonb value | typed in code; pay schedule, cash floor, thresholds, quiet hours, nag, assistant autonomy (global + per area) |
+| `accounts` | name, type, source, external id, include_in_cash, reported balance + as-of, bank balance + as-of | cards excluded from cash by default |
+| `balance_snapshots` | account or debt, kind (reported/bank), balance, as-of | history; later the net-worth series |
+| `category_groups`, `categories` | name, sort; sign, group, note, is_everyday, sort, archived | no `due_day` on categories any more: bills carry due dates |
+| `category_plans` | category, starts_month, amount, label | plan phases; effective = latest `starts_month ≤ month` |
+| `recurring_bills` | name, amount, cadence (months: 1, 3, 6, 12…), next_due, category, account, match pattern, status (active/paused/canceled), note, last_matched_transaction | the new noun; yearly ones feed the sinking fund |
+| `bill_splits` | bill, category, amount or percent | only when a person asks for a split |
+| `rules` | priority, match type, pattern, constraints, action (categorize/ignore), category, set_note, hit stats | canceled-bill flagging moved to bills |
+| `transactions` | account, date, description, original, amount, category, source, external id, fingerprint, pending, note, planned_item, recurring_bill, rule, review_status, import_batch, shadow_of, raw, deleted_at | unique (source, external id); unique (account, fingerprint); soft delete |
+| `planned_items` | date, item, amount, category, status, decided_by, note, matched_transaction | one-offs |
+| `sinking_funds` | name, account, funded balance + as-of | should-have derived from yearly/quarterly bills |
+| `debts` | name, kind, balance + as-of, apr_bps, minimum, planned payment, due day, account, custom order, closed, note | strategy + extra payment live in settings |
+| `goals` | name, target, target_date, account, category (the contribution), status | savings goals |
+| `alerts` | type, severity, title, detail, amount, dedupe key, status, refs (transaction/category/bill/debt/account/planned), context, notified/nudged/acked/resolved times, snooze | unique live dedupe key |
+| `questions` | asked_by, text, options, kind (ask/proposal), proposal jsonb (tool + args), status, answer, applied_at, refs | proposals approved here in Backseat mode |
+| `assistant_actions` | tool, args, before, after, undo (tool + args), undone_at, actor key | the "Claude did…" feed with Undo |
+| `push_subscriptions` | user, endpoint, keys, user agent, last success | Web Push targets |
+| `notifications` | alert or question, channel (webpush/ntfy/smtp), kind, status, external id, error | delivery log |
+| `import_batches`, `card_events` | mapping, counts, rolled_back_at; decline events from Privacy.com | |
+| `plaid_items` | item id, encrypted access token, cursor, status, failures | |
+| `job_runs`, `audit_log` | job, status, summary, error; actor, action, entity, before/after | every write audited |
+
+Derived on read, never stored: category rollups and the month view; running
+estimate and projected low point; each category's bill total and suggested
+plan; sinking-fund set-aside and should-have; debt projections, strategy
+comparison and what-ifs; goal projections; pace.
 
 ## 7. Jobs and automation — proposed
 
