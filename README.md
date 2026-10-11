@@ -1,6 +1,70 @@
 # Hearth
 
-Architecture restart in progress. The design is being rebuilt from scratch in
-`docs/ARCHITECTURE.md`; nothing else lives here yet.
+**Hearth — household money, on plan.**
 
-The first attempt is preserved on the branch `archive/2026-10-10-first-pass`.
+Hearth is a self-hosted budget for one household. It keeps the family on a
+monthly plan, keeps an honest running estimate of cash and how low it gets
+before the next paycheck, forecasts debt payoff and savings goals, and lets an
+AI assistant (Claude, over MCP) do the day-to-day tending: categorizing the odd
+transaction, adding the bill you mention in chat, asking a question when it
+can't tell, and answering "can we buy X?" with a straight yes, not now, or no.
+
+> Status: **in development.** No releases yet; `main` always builds.
+> Nothing personal lives in this repo; seed and test data are obviously fake.
+
+## Shape
+
+| Screen | What it answers |
+| --- | --- |
+| **Budget** (home) | How much cash is really there, how low it gets before payday, and plan / spent / left for every category. |
+| **Activity** | One inbox: alerts, the assistant's questions and proposals, uncategorized transactions. |
+| **Plan** | What's coming: recurring bills by due date, planned one-offs, the sinking fund for yearly bills. |
+| **Goals** | Debts with payoff dates and strategy comparison; savings goals with reach dates. |
+| **More** | Accounts, rules, settings (including the assistant's Backseat / Driver switch), users, API keys, integrations, jobs. |
+
+The assistant works in **Pull mode** by default: Claude reaches Hearth through
+the MCP connector in the Claude app, including on a schedule. **API mode** is
+an opt-in toggle for instance owners who add their own Anthropic key: in-app
+chat, an assistant pass job, and pushed questions, with a monthly spend cap.
+
+## Stack
+
+- **Backend:** Rust (Axum, Tokio, sqlx on PostgreSQL 16, `rmcp` for MCP).
+- **UI:** TypeScript (Vite, React, Tailwind), mobile-first, installable PWA with
+  Web Push, embedded in the binary. No native app.
+- **Packaging:** one Docker image plus Postgres in `docker-compose.yml`.
+- **Money** is integer cents; **dates** are ISO strings in the household's
+  timezone; every write is audited.
+
+## Quick start (Docker)
+
+```sh
+cp .env.example .env
+# set APP_SECRET (openssl rand -base64 48), APP_URL (https, behind your proxy)
+docker compose up -d --build
+```
+
+Open the app URL; the first visit creates the owner account. `docs/SETUP.md`
+covers connecting the Claude app, the recurring task, integrations, and API
+mode.
+
+## Local development
+
+```sh
+docker compose up -d db
+cp .env.example .env                 # DATABASE_URL → localhost
+cargo run -p hearth-server           # API on :3000, runs migrations
+npm --prefix web install && npm --prefix web run dev   # UI on :5173
+```
+
+Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets`,
+`cargo test --workspace`, and in `web/`: `npm run lint && npm run build`.
+
+## Documentation
+
+- `docs/ARCHITECTURE.md` — the design, decided section by section
+- `docs/UI.md` — the screens
+- `docs/DATA-MODEL.md`, `docs/MCP.md`, `docs/SETUP.md` — written as those parts land
+- `CONTRIBUTING.md`
+
+MIT licensed.

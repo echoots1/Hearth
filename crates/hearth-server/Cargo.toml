@@ -1,0 +1,46 @@
+[package]
+name = "hearth-server"
+description = "Hearth — household money, on plan. API, jobs, MCP server and embedded web UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+default-run = "hearth"
+
+[[bin]]
+name = "hearth"
+path = "src/main.rs"
+
+[dependencies]
+hearth-core = { path = "../hearth-core", features = ["sqlx"] }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+axum = { version = "0.8", features = ["macros", "json"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json", "migrate", "derive", "macros"] }
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+rust-embed = "8"
+mime_guess = "2"
+http = "1"
+tower = "0.5"
+tower-http = { version = "0.7", features = ["trace", "cors", "compression-gzip", "set-header"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+argon2 = "0.6"
+rand = "0.10"
+base64 = "0.22"
+sha2 = "0.11"
+hmac = "0.13"
+aes-gcm = "0.11"
+schemars = "1"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+
+[lints]
+workspace = true
