@@ -86,7 +86,7 @@ function TimelineCard({ today, onBill, onPlanned }: { today: Today; onBill: (id:
                 {v.headroom_cents >= 0 ? `${dollars(v.headroom_cents)} above the floor at the low` : `${dollars(-v.headroom_cents)} below the floor at the low`}
               </span>
               <span className="text-muted text-[12px] font-semibold">
-                {t.paydays.length} paycheck{t.paydays.length === 1 ? "" : "s"} · +{dollars(t.income_cents)} · bills −{dollars(t.bills_cents)} · everyday −{dollars(t.everyday_cents)}{t.planned_cents > 0 && ` · one-offs −${dollars(t.planned_cents)}`}
+                {t.entries.filter((e) => e.kind === "paycheck").length} paycheck{t.entries.filter((e) => e.kind === "paycheck").length === 1 ? "" : "s"} · +{dollars(t.income_cents)} · bills −{dollars(t.bills_cents)} · everyday −{dollars(t.everyday_cents)}{t.planned_cents > 0 && ` · one-offs −${dollars(t.planned_cents)}`}
               </span>
             </div>
             {t.overdue_count > 0 && (
@@ -96,7 +96,7 @@ function TimelineCard({ today, onBill, onPlanned }: { today: Today; onBill: (id:
             )}
             {t.unscheduled_income_monthly_cents > 0 && (
               <p className="text-muted text-[12px] font-semibold">
-                Not counting {dollars(t.unscheduled_income_monthly_cents)}/mo of income with no payday. Set those categories to plan per paycheck to put them on the timeline.
+                Not counting {dollars(t.unscheduled_income_monthly_cents)}/mo of income with no payday. Set those categories to plan per paycheck, on the household schedule or their own, to put them on the timeline.
               </p>
             )}
             {t.paydays.length === 0 && t.income_cents === 0 && t.unscheduled_income_monthly_cents === 0 && (

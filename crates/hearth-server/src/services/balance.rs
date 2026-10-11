@@ -169,6 +169,7 @@ pub async fn timeline(ctx: &Ctx, days: Option<i64>) -> Result<TimelineView> {
                 sign,
                 is_everyday: c.is_everyday,
                 plan_per_paycheck: c.plan_per_paycheck,
+                pay_schedule: c.pay_schedule.map(|j| j.0),
                 phases: phases.remove(&c.id).unwrap_or_default(),
                 activity_cents: match sign {
                     hearth_core::budget::Sign::Spend => -actual,

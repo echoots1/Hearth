@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use hearth_core::budget::{self, CategoryInput, GroupInput, MonthView, PlanPhase};
 use hearth_core::calendar::Month;
 use hearth_core::money::Cents;
+use hearth_core::settings::PaySchedule;
 use serde::Deserialize;
 
 use uuid::Uuid;
@@ -149,6 +150,8 @@ pub struct CreateCategory {
     pub is_everyday: Option<bool>,
     /// The plan is per paycheck (times the paydays in the month).
     pub plan_per_paycheck: Option<bool>,
+    /// Paid on its own rhythm instead of the household schedule.
+    pub pay_schedule: Option<PaySchedule>,
     pub sort_order: Option<i32>,
     /// Optional initial plan for the current month (per paycheck when
     /// `plan_per_paycheck`).
@@ -161,8 +164,8 @@ pub async fn create_category(ctx: &Ctx, actor: &Actor, c: CreateCategory) -> Res
     }
     let mut tx = ctx.pool.begin().await?;
     let cat = sqlx::query_as::<_, Category>(
-        "insert into categories (household_id, group_id, name, sign, note, is_everyday, sort_order, plan_per_paycheck)
-         values ($1, $2, $3, $4, $5, $6, coalesce($7, (select coalesce(max(sort_order), 0) + 10 from categories where group_id = $2)), $8)
+        "insert into categories (household_id, group_id, name, sign, note, is_everyday, sort_order, plan_per_paycheck, pay_schedule)
+         values ($1, $2, $3, $4, $5, $6, coalesce($7, (select coalesce(max(sort_order), 0) + 10 from categories where group_id = $2)), $8, $9)
          returning *",
     )
     .bind(ctx.household_id)
@@ -173,6 +176,7 @@ pub async fn create_category(ctx: &Ctx, actor: &Actor, c: CreateCategory) -> Res
     .bind(c.is_everyday.unwrap_or(false))
     .bind(c.sort_order)
     .bind(c.plan_per_paycheck.unwrap_or(false))
+    .bind(c.pay_schedule.map(sqlx::types::Json))
     .fetch_one(&mut *tx)
     .await
     .map_err(unique_to_conflict)?;
@@ -212,8 +216,19 @@ pub struct UpdateCategory {
     pub sort_order: Option<i32>,
     pub is_archived: Option<bool>,
     pub plan_per_paycheck: Option<bool>,
+    /// Give the category its own pay schedule.
+    pub pay_schedule: Option<PaySchedule>,
+    /// Drop its own schedule and follow the household's again.
+    pub clear_pay_schedule: Option<bool>,
 }
 
+/// Rename, move, flag or archive a category.
+///
+/// Switching `plan_per_paycheck` converts every plan phase so the month's
+/// plan stays what it was: to per paycheck divides by the typical paychecks
+/// in a month (2 on a biweekly or semimonthly schedule, 4 weekly, 1
+/// monthly); back to per month multiplies. The schedule used is the
+/// category's own when it has one, else the household's.
 pub async fn update_category(
     ctx: &Ctx,
     actor: &Actor,
@@ -221,11 +236,18 @@ pub async fn update_category(
     u: UpdateCategory,
 ) -> Result<Category> {
     let before = get_category(ctx, id).await?;
+    if u.pay_schedule.is_some() && u.clear_pay_schedule == Some(true) {
+        return Err(invalid(
+            "pay_schedule and clear_pay_schedule cannot both be given",
+        ));
+    }
+    let mut tx = ctx.pool.begin().await?;
     let after = sqlx::query_as::<_, Category>(
         "update categories set group_id = coalesce($3, group_id), name = coalesce($4, name), sign = coalesce($5, sign),
          note = coalesce($6, note), is_everyday = coalesce($7, is_everyday),
          sort_order = coalesce($8, sort_order), is_archived = coalesce($9, is_archived),
-         plan_per_paycheck = coalesce($10, plan_per_paycheck), updated_at = now()
+         plan_per_paycheck = coalesce($10, plan_per_paycheck),
+         pay_schedule = case when $12 then null else coalesce($11, pay_schedule) end, updated_at = now()
          where household_id = $1 and id = $2 returning *",
     )
     .bind(ctx.household_id)
@@ -238,11 +260,13 @@ pub async fn update_category(
     .bind(u.sort_order)
     .bind(u.is_archived)
     .bind(u.plan_per_paycheck)
-    .fetch_one(&ctx.pool)
+    .bind(u.pay_schedule.map(sqlx::types::Json))
+    .bind(u.clear_pay_schedule.unwrap_or(false))
+    .fetch_one(&mut *tx)
     .await
     .map_err(unique_to_conflict)?;
     super::audit::record(
-        &ctx.pool,
+        &mut *tx,
         ctx.household_id,
         actor,
         "category.update",
@@ -252,6 +276,48 @@ pub async fn update_category(
         Some(&after),
     )
     .await?;
+    if before.plan_per_paycheck != after.plan_per_paycheck {
+        let schedule = match &after.pay_schedule {
+            Some(s) => s.0.clone(),
+            None => super::settings::load(ctx).await?.pay_schedule,
+        };
+        let n = schedule.typical_paychecks_per_month().max(1) as i64;
+        let plans_before = sqlx::query_as::<_, CategoryPlan>(
+            "select * from category_plans where category_id = $1 order by starts_month",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let plans_after = if after.plan_per_paycheck {
+            sqlx::query_as::<_, CategoryPlan>(
+                "update category_plans set amount_cents = round(amount_cents::numeric / $2)::bigint, updated_at = now()
+                 where category_id = $1 returning *",
+            )
+        } else {
+            sqlx::query_as::<_, CategoryPlan>(
+                "update category_plans set amount_cents = amount_cents * $2, updated_at = now()
+                 where category_id = $1 returning *",
+            )
+        }
+        .bind(id)
+        .bind(n)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !plans_before.is_empty() {
+            super::audit::record(
+                &mut *tx,
+                ctx.household_id,
+                actor,
+                "budget.rescale_plans",
+                "categories",
+                id,
+                Some(&plans_before),
+                Some(&plans_after),
+            )
+            .await?;
+        }
+    }
+    tx.commit().await?;
     Ok(after)
 }
 
@@ -407,6 +473,7 @@ pub async fn category_inputs(
             bills_total_cents: bill_totals.get(&c.id).copied().unwrap_or(Cents::ZERO),
             phases: phases.remove(&c.id).unwrap_or_default(),
             plan_per_paycheck: c.plan_per_paycheck,
+            pay_schedule: c.pay_schedule.clone().map(|j| j.0),
             actual_cents: actuals.get(&Some(c.id)).copied().unwrap_or(Cents::ZERO),
         })
         .collect();

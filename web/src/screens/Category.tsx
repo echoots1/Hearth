@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { useAccountName } from "../components/AccountPicker";
+import { PayScheduleFields, scheduleWord } from "../components/PayScheduleForm";
 import { Card, CardHead, ErrorNote, Field, Icon, MoneyInput, PageHeader, Progress, Sheet, SheetActions, Spinner, Stat, Toggle } from "../components/ui";
 import { tool } from "../lib/api";
-import { useCategoryDetail, useGroups, useToday } from "../lib/data";
+import { useCategoryDetail, useGroups, useSettings, useToday } from "../lib/data";
 import { addMonths, monthLabel, monthShort, ordinal, shortDate } from "../lib/dates";
 import { dollars, money } from "../lib/money";
 import { useMutation } from "../lib/query";
 import { useSession } from "../lib/session";
-import type { CategoryDetail, Today } from "../lib/types";
+import type { CategoryDetail, PaySchedule, Today } from "../lib/types";
 import { describe } from "./Budget";
 
 export function CategoryScreen() {
@@ -57,6 +58,7 @@ export function CategoryScreen() {
           <div className="text-muted flex flex-col items-end gap-0.5 text-[13px] font-semibold">
             <span>{income ? "received" : "spent"} {dollars(des.spent)}</span>
             <span>plan {dollars(v.plan_cents)}{v.plan_per_paycheck && ` · ${v.paychecks_in_month} × ${dollars(v.per_paycheck_cents)}`}</span>
+            {v.plan_per_paycheck && v.pay_schedule && <span>paid {scheduleWord(v.pay_schedule)}</span>}
           </div>
         </div>
         <Progress bps={v.used_bps} color={income ? "income" : des.attention ? "attention" : "ink"} marker={isCurrent ? monthPct : undefined} thick />
@@ -301,10 +303,29 @@ function AskClaudeSheet({ open, onClose, d, today, isCurrent }: { open: boolean;
 
 function EditCategorySheet({ open, onClose, d }: { open: boolean; onClose: () => void; d: CategoryDetail }) {
   const groups = useGroups();
-  const [f, setF] = useState({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, plan_per_paycheck: d.category.plan_per_paycheck, is_archived: d.category.is_archived });
-  useEffect(() => setF({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, plan_per_paycheck: d.category.plan_per_paycheck, is_archived: d.category.is_archived }), [d.category, open]);
+  const settings = useSettings();
+  const initial = () => ({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, plan_per_paycheck: d.category.plan_per_paycheck, pay_schedule: d.category.pay_schedule as PaySchedule | null, is_archived: d.category.is_archived });
+  const [f, setF] = useState(initial);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setF(initial()), [d.category, open]);
   const nav = useNavigate();
-  const m = useMutation(() => tool("budget.update_category", { category_id: d.category.id, ...f }), ["budget."]);
+  const household = settings.data?.pay_schedule;
+  const typical = (s: PaySchedule | null | undefined) => (s ?? household)?.kind === "weekly" ? 4 : (s ?? household)?.kind === "monthly" ? 1 : 2;
+  const m = useMutation(
+    () =>
+      tool("budget.update_category", {
+        category_id: d.category.id,
+        name: f.name,
+        group_id: f.group_id,
+        is_everyday: f.is_everyday,
+        plan_per_paycheck: f.plan_per_paycheck,
+        is_archived: f.is_archived,
+        pay_schedule: f.pay_schedule,
+        clear_pay_schedule: f.pay_schedule == null && d.category.pay_schedule != null,
+      }),
+    ["budget.", "balance."],
+  );
+  const income = d.category.sign === "income";
   return (
     <Sheet open={open} onClose={onClose} title="Edit category">
       <div className="flex flex-col gap-3">
@@ -315,7 +336,27 @@ function EditCategorySheet({ open, onClose, d }: { open: boolean; onClose: () =>
           </select>
         </Field>
         <Toggle label="Everyday spending" hint="Counts toward the low point at its daily pace." checked={f.is_everyday} onChange={(v) => setF({ ...f, is_everyday: v })} />
-        <Toggle label="Plan per paycheck" hint="The plan amount is per paycheck; the month's plan is that times its paydays, so a three-paycheck month plans three. Paychecks then show on the cash timeline." checked={f.plan_per_paycheck} onChange={(v) => setF({ ...f, plan_per_paycheck: v })} />
+        <Toggle
+          label="Plan per paycheck"
+          hint={
+            f.plan_per_paycheck !== d.category.plan_per_paycheck
+              ? f.plan_per_paycheck
+                ? `Saving divides the plan by ${typical(f.pay_schedule)}: ${dollars(d.view.plan_cents)}/mo becomes ${dollars(Math.round(d.view.plan_cents / typical(f.pay_schedule)))} per paycheck.`
+                : `Saving multiplies the plan by ${typical(f.pay_schedule)}: ${dollars(d.view.per_paycheck_cents)} per paycheck becomes ${dollars(d.view.per_paycheck_cents * typical(f.pay_schedule))}/mo.`
+              : "The plan is per paycheck; the month's plan is that times its paydays, so a three-paycheck month plans three. Income planned this way lands on the cash timeline on each payday."
+          }
+          checked={f.plan_per_paycheck}
+          onChange={(v) => setF({ ...f, plan_per_paycheck: v })}
+        />
+        {f.plan_per_paycheck && (
+          <Field label={income ? "Paid" : "Paychecks"} hint={f.pay_schedule ? undefined : household ? `The household schedule: ${scheduleWord(household)}.` : undefined}>
+            <select className="field" value={f.pay_schedule ? "own" : "household"} onChange={(e) => setF({ ...f, pay_schedule: e.target.value === "own" ? (household ?? { kind: "monthly", day: 1 }) : null })}>
+              <option value="household">On the household schedule</option>
+              <option value="own">On its own schedule</option>
+            </select>
+          </Field>
+        )}
+        {f.plan_per_paycheck && f.pay_schedule && <PayScheduleFields value={f.pay_schedule} onChange={(v) => setF({ ...f, pay_schedule: v })} />}
         <Toggle label="Archived" hint="Hidden from the budget; history stays." checked={f.is_archived} onChange={(v) => setF({ ...f, is_archived: v })} />
       </div>
       <ErrorNote error={m.error} />

@@ -51,8 +51,10 @@ integrations, jobs).
    day, "paid", upcoming plan phase, pace, or the standing note); spent /
    plan; left (orange when over or pacing over); progress bar. Income rows
    show "still expected" and a blue bar. A category planned per paycheck
-   shows "$X × N paychecks" (N from the pay schedule, so a three-paycheck
-   month plans three). Tap → Category detail.
+   shows "$X × N paychecks" (N from its own pay schedule or the
+   household's, so a three-paycheck month plans three) and, when it has its
+   own schedule, "every 2 weeks" or "monthly on the 1st". Tap → Category
+   detail.
 
 ### Category detail
 
@@ -64,7 +66,11 @@ integrations, jobs).
   month comes to.
 - Plan phases: "Now" and any future phase ("After the move · from Jan"),
   per month or per paycheck.
-- Edit: name, group, everyday, plan per paycheck, archived.
+- Edit: name, group, everyday, plan per paycheck (switching converts the
+  amount so the month's plan stays the same, and the hint says what it
+  becomes), and for a per-paycheck category whether it is paid on the
+  household schedule or its own (weekly, every two weeks, twice a month,
+  monthly), archived.
 - Standing note: free text read by the AI and (for a few literal tokens)
   by the alert rules.
 - This month's transactions with source and how each was categorized
@@ -95,7 +101,8 @@ A timeline of what's coming, soonest first, with the same card language:
   weeks: now, the low point (and when), and the balance at the end, with a
   pill for the distance from the cash floor at the low. Below, every row in
   date order with the running balance after it: each paycheck (income
-  categories planned per paycheck, on each payday), each bill occurrence,
+  categories planned per paycheck, on the household's paydays or the
+  category's own), each bill occurrence,
   planned one-offs, and the everyday drain as one row per stretch between
   them. A bill or one-off past its date with no matching charge is still
   expected: it lands today, marked past due, and stays until the charge

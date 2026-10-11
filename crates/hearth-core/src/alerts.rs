@@ -649,6 +649,7 @@ mod tests {
             plan_per_paycheck: false,
             per_paycheck_cents: Cents::ZERO,
             paychecks_in_month: 2,
+            pay_schedule: None,
             actual_cents: Cents::dollars(-spent),
             activity_cents: Cents::dollars(spent),
             remaining_cents: Cents::dollars(plan - spent),

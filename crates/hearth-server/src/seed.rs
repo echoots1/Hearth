@@ -1112,6 +1112,7 @@ async fn category(
             note: None,
             is_everyday: Some(everyday),
             plan_per_paycheck: None,
+            pay_schedule: None,
             sort_order: None,
             plan_cents: plan_cents.map(Cents::new),
         },

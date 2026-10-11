@@ -154,7 +154,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `budget.delete_plan` | plans_bills | Remove a plan phase. |
 | `budget.set_category_note` | categorizing_notes | Set a category's standing note (read by the assistant; jobs honor [no-alerts], [no-large-charge], [no-pace]). |
 | `budget.set_plan` | plans_bills | Set a category's plan from a month onward (a plan phase). Omit starts_month for the current month. For a category with `plan_per_paycheck` the amount is per paycheck. |
-| `budget.update_category` | plans_bills | Rename, move, flag (everyday, per-paycheck plan) or archive a category. |
+| `budget.update_category` | plans_bills | Rename, move, flag (everyday, per-paycheck plan, own pay schedule) or archive a category. Switching the per-paycheck flag converts the plan amounts (÷ or × the typical paychecks a month) so the month's plan is unchanged. |
 | `debts.set_balance` | debts_goals | Record a debt's current balance. |
 | `debts.set_strategy` | debts_goals | Set the payoff strategy (avalanche, snowball, custom order) and the extra monthly payment. |
 | `debts.upsert` | debts_goals | Add a debt or update one (name, balance, APR in bps, minimum, planned payment, due day). |
@@ -1084,6 +1084,89 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 
 ```json
 {
+  "$defs": {
+    "PaySchedule": {
+      "description": "When paychecks arrive. The household has one; an income category may\ncarry its own when it is paid on a different rhythm.",
+      "oneOf": [
+        {
+          "properties": {
+            "anchor": {
+              "format": "date",
+              "type": "string"
+            },
+            "kind": {
+              "const": "weekly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "anchor"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "anchor": {
+              "format": "date",
+              "type": "string"
+            },
+            "kind": {
+              "const": "biweekly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "anchor"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Two paydays a month, e.g. `[1, 15]` or `[15, 31]` (31 = last day).",
+          "properties": {
+            "days": {
+              "items": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "kind": {
+              "const": "semimonthly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "days"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "day": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "monthly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "day"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
   "properties": {
     "group_id": {
       "description": "Group id, or a group name (created if missing).",
@@ -1120,6 +1203,17 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
         "string",
         "null"
       ]
+    },
+    "pay_schedule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PaySchedule"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Paid on its own rhythm instead of the household pay schedule, e.g.\n`{\"kind\": \"monthly\", \"day\": 1}` or `{\"kind\": \"biweekly\", \"anchor\": \"2026-10-09\"}`."
     },
     "plan_cents": {
       "description": "Plan for this month onward, in cents (per paycheck when `plan_per_paycheck`).",
@@ -1276,10 +1370,100 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 
 ```json
 {
+  "$defs": {
+    "PaySchedule": {
+      "description": "When paychecks arrive. The household has one; an income category may\ncarry its own when it is paid on a different rhythm.",
+      "oneOf": [
+        {
+          "properties": {
+            "anchor": {
+              "format": "date",
+              "type": "string"
+            },
+            "kind": {
+              "const": "weekly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "anchor"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "anchor": {
+              "format": "date",
+              "type": "string"
+            },
+            "kind": {
+              "const": "biweekly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "anchor"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Two paydays a month, e.g. `[1, 15]` or `[15, 31]` (31 = last day).",
+          "properties": {
+            "days": {
+              "items": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "kind": {
+              "const": "semimonthly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "days"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "day": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "monthly",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "day"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
   "properties": {
     "category_id": {
       "format": "uuid",
       "type": "string"
+    },
+    "clear_pay_schedule": {
+      "description": "Drop its own schedule and follow the household's.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "group_id": {
       "format": "uuid",
@@ -1306,8 +1490,19 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
         "null"
       ]
     },
+    "pay_schedule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PaySchedule"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "This category's own pay schedule (same shape as the household setting)."
+    },
     "plan_per_paycheck": {
-      "description": "Plan per paycheck instead of per month (see `budget.create_category`).",
+      "description": "Plan per paycheck instead of per month (see `budget.create_category`).\nSwitching converts the plan amounts so the month's plan stays the same.",
       "type": [
         "boolean",
         "null"

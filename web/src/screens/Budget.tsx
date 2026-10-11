@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { scheduleWord } from "../components/PayScheduleForm";
 import { Card, CardHead, ErrorNote, Field, Icon, MoneyInput, Pill, Progress, Sheet, SheetActions, Spinner, Stat, Toggle, Wordmark } from "../components/ui";
 import { tool } from "../lib/api";
 import { useBalance, useGroups, useInboxCounts, useMonth, useToday } from "../lib/data";
@@ -245,7 +246,7 @@ export function describe(c: CategoryView, today: Today, isCurrent: boolean) {
   const pacingOver = !income && c.is_everyday && isCurrent && day >= 5 && c.plan_cents > 0 && projected > c.plan_cents * 1.1;
   const parts: string[] = [];
   let attention = false;
-  if (c.plan_per_paycheck) parts.push(`${dollars(c.per_paycheck_cents)} × ${c.paychecks_in_month} paycheck${c.paychecks_in_month === 1 ? "" : "s"}`);
+  if (c.plan_per_paycheck) parts.push(`${dollars(c.per_paycheck_cents)} × ${c.paychecks_in_month} paycheck${c.paychecks_in_month === 1 ? "" : "s"}${c.pay_schedule ? ` · ${scheduleWord(c.pay_schedule)}` : ""}`);
   if (income) {
     if (isCurrent) parts.push(`next ${shortDate(today.next_payday)}`);
   } else {
