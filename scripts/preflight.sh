@@ -53,7 +53,7 @@ PORT="$(printf '%s\n' "$resolved" | awk '/published:/{gsub(/"/,"",$2); print $2;
 PLAID_CLIENT_ID="$(getenv PLAID_CLIENT_ID)"
 
 case "$APP_URL" in
-  "")        bad "APP_URL is empty" ;;
+  "")        ok "APP_URL not set: set the public URL in the app under More → Server" ;;
   https://*) ok "APP_URL=$APP_URL" ;;
   http://localhost*|http://127.0.0.1*)
              warn "APP_URL=$APP_URL (fine for a local try; the installable app, push and the Claude connector need https)" ;;
@@ -62,7 +62,7 @@ case "$APP_URL" in
 esac
 
 if [ -z "$APP_SECRET" ]; then
-  bad "APP_SECRET is empty (openssl rand -base64 48)"
+  ok "APP_SECRET not set: generated on first start into the hearth-data volume (back it up)"
 elif [ "$APP_SECRET" = "change-me-to-a-long-random-string-at-least-32-chars" ] || case "$APP_SECRET" in CHANGE-ME*) true;; *) false;; esac; then
   bad "APP_SECRET is still the example value"
 elif [ "${#APP_SECRET}" -lt 32 ]; then
@@ -72,7 +72,7 @@ else
 fi
 
 if [ -z "$APP_ENCRYPTION_KEY" ]; then
-  warn "APP_ENCRYPTION_KEY is empty: push notifications, Plaid and API mode stay off until it is set (set it now; rotating later means re-linking)"
+  ok "APP_ENCRYPTION_KEY not set: generated on first start into the hearth-data volume (back it up)"
 elif case "$APP_ENCRYPTION_KEY" in CHANGE-ME*) true;; *) false;; esac; then
   bad "APP_ENCRYPTION_KEY is still the example value"
 elif [ "${#APP_ENCRYPTION_KEY}" -lt 32 ]; then
@@ -95,9 +95,6 @@ case "$APP_URL" in
     else warn "APP_URL is https but TRUST_PROXY is not true; rate limits will see the proxy's address, not the client's"; fi ;;
 esac
 
-if [ -n "$PLAID_CLIENT_ID" ] && [ -z "$APP_ENCRYPTION_KEY" ]; then
-  bad "Plaid is configured but APP_ENCRYPTION_KEY is empty (the server refuses to start)"
-fi
 
 if [ "$fail" -ne 0 ]; then
   echo; echo "Fix the items marked FAIL, then run again."; exit 1

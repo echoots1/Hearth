@@ -19,7 +19,7 @@ fn page(title: &str, body: &str, app_url: &str) -> Html<String> {
 }
 
 pub async fn act(State(state): State<AppState>, Path(token): Path<String>) -> Response {
-    let app_url = state.config.app_url.clone();
+    let app_url = state.runtime().app_url.clone();
     let Some((alert_id, action)) = actions::verify(&state.config.app_secret, &token, Utc::now())
     else {
         return (

@@ -52,7 +52,7 @@ impl Limiter {
 /// The client address: the first `X-Forwarded-For` hop when `TRUST_PROXY`
 /// is on, otherwise the socket peer.
 pub fn client_ip(state: &AppState, req: &Request) -> IpAddr {
-    if state.config.trust_proxy
+    if state.runtime().trust_proxy
         && let Some(v) = req.headers().get("x-forwarded-for")
         && let Ok(s) = v.to_str()
         && let Some(first) = s.split(',').next()

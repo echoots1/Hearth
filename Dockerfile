@@ -30,11 +30,13 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 --home /app hearth
+ && useradd --system --uid 10001 --home /app hearth \
+ && mkdir -p /app/data && chown hearth:hearth /app/data
 WORKDIR /app
 COPY --from=builder /app/target/release/hearth /usr/local/bin/hearth
 USER hearth
-ENV PORT=3000
+# Generated APP_SECRET / APP_ENCRYPTION_KEY live here when not provided; mount a volume.
+ENV PORT=3000 HEARTH_DATA_DIR=/app/data
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD curl -fsS http://localhost:3000/api/health || exit 1

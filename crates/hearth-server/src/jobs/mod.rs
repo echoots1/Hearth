@@ -42,7 +42,7 @@ pub fn actor(name: &str) -> Actor {
 /// Every job this build knows, with its default interval. Sync jobs are
 /// added by the integrations when they are configured.
 pub fn registry(state: &AppState) -> Vec<Job> {
-    let j = &state.config.jobs;
+    let runtime = state.runtime();
     let mut v = vec![
         Job {
             name: "process",
@@ -54,7 +54,7 @@ pub fn registry(state: &AppState) -> Vec<Job> {
         Job {
             name: "evaluate",
             description: "recompute the month and the low point; raise or refresh alerts by dedupe key; note milestones",
-            every: Duration::from_secs(j.evaluate_minutes.max(1) * 60),
+            every: Duration::from_secs(runtime.evaluate_minutes * 60),
             handler: |s| Box::pin(evaluate::run(s)),
             gate: None,
         },

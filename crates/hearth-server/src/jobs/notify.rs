@@ -158,7 +158,8 @@ async fn owner_contact(ctx: &Ctx) -> anyhow::Result<String> {
 }
 
 fn alert_message(state: &AppState, a: &Alert, nudge: bool) -> Msg {
-    let base = &state.config.app_url;
+    let runtime = state.runtime();
+    let base = &runtime.app_url;
     let exp = Utc::now() + Duration::days(7);
     let ack = format!(
         "{base}/api/n/{}",
@@ -187,7 +188,8 @@ fn alert_message(state: &AppState, a: &Alert, nudge: bool) -> Msg {
 }
 
 fn question_message(state: &AppState, q: &Question) -> Msg {
-    let base = &state.config.app_url;
+    let runtime = state.runtime();
+    let base = &runtime.app_url;
     let (title, body) = match (&q.kind, &q.proposal) {
         (QuestionKind::Proposal, Some(p)) => (
             "Hearth: Claude proposes".to_string(),

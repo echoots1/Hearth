@@ -40,16 +40,19 @@ git clone https://github.com/echoots1/Hearth.git && cd Hearth
 cp .env.example .env
 ```
 
-Edit `.env`. The lines that matter on day one:
+Edit `.env`. Only two lines matter on day one:
 
 | Setting | What to put |
 | --- | --- |
-| `APP_URL` | The public URL, e.g. `https://money.example.net`. Cookies go Secure when it starts with `https`. Notification links and the connector URL are built from it. |
-| `APP_SECRET` | A random string of at least 32 characters (`openssl rand -base64 48`). Signs sessions and one-tap notification links. |
-| `APP_ENCRYPTION_KEY` | Another random string. Encrypts the Plaid tokens, the VAPID push key and the optional Anthropic key at rest. Set it now; rotating it later means re-linking. |
 | `POSTGRES_PASSWORD` | Change it from the example. Any characters are fine; the app and the bundled Postgres both read it. |
-| `TRUST_PROXY` | `true` when behind a reverse proxy. |
-| `PORT` | The host port to publish (the container always listens on 3000). |
+| `PORT` | The host port to publish if 3000 is taken (the container always listens on 3000). |
+
+Everything else is set inside the app after the first visit (**More →
+Server** for the public URL, reverse proxy and schedules; **More →
+Integrations** and **More → Notifications** for the feeds and channels), and
+the session and encryption keys are generated on first start into the
+`hearth-data` volume. The remaining variables in `.env.example` are optional
+overrides for people who prefer the environment.
 
 Then check the settings and start the stack:
 
@@ -64,8 +67,10 @@ replaced with a literal value if you would rather keep everything in the
 compose file. The preflight reads whatever Compose resolves, so both ways get
 checked.
 
-Open the app URL: the first visit creates the owner account and names the
-household. Add people under **More → People**.
+Open `http://<host>:3000`: the first visit creates the owner account and
+names the household. Then **More → Server** and set the **Public URL** to
+what people will type (the `https://` address once you have one, see
+below). Add people under **More → People**.
 
 To update later:
 
@@ -82,12 +87,13 @@ has every setting written inline.
 1. **Apps → Discover Apps**, then the **⋮** menu at the top right → **Install
    via YAML**.
 2. Name the app `hearth`, paste the file, and edit the lines marked `CHANGE`:
-   `APP_URL`, the two secrets, the database password (one line at the top,
-   used by both services), and the host port if 3000 is taken (TrueNAS reports `port is already allocated`
-   at install time; pick another, such as `3456`, and use it in `APP_URL`
-   too).
+   the database password (one line at the top, used by both services), and
+   the host port if 3000 is taken (TrueNAS reports `port is already
+   allocated` at install time; pick another, such as `3456`, and change only
+   the left side of the `ports:` line).
 3. **Install.** The app shows healthy once Postgres is up and Hearth has run
-   its migrations.
+   its migrations. Open `http://<nas-ip>:<port>`, create the owner account,
+   then **More → Server** and set the **Public URL**.
 
 Later edits to those values go through **Installed → hearth → Edit**, which
 reopens the same YAML. Saving it also pulls the newest image (the file sets
@@ -127,7 +133,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ### Reverse proxy
 
-Point your proxy at port `3000` (or `PORT`) and set `TRUST_PROXY=true`. The
+Point your proxy at port `3000` (or `PORT`) and turn on **Behind a reverse
+proxy** under **More → Server**. The
 MCP endpoint streams responses, so the proxy must pass `text/event-stream`
 through without buffering. Caddy does all of this with one block and fetches
 the certificate itself:
@@ -182,8 +189,9 @@ TrueNAS and packages everywhere else:
 - **Caddy or Nginx Proxy Manager with Let's Encrypt.** The snippets above.
   If port 80 can't be opened, use the DNS challenge for your DNS provider.
 
-Whichever you pick, set `APP_URL` to the resulting `https://` address and
-`TRUST_PROXY=true`, then restart the app container.
+Whichever you pick, open **More → Server**, set **Public URL** to the
+resulting `https://` address and turn on **Behind a reverse proxy**. No
+restart needed.
 
 ### Operate it
 
@@ -204,27 +212,31 @@ first seven characters of the commit). Set `HEARTH_TAG=sha-abc1234` in `.env`
 (or edit the `image:` line on TrueNAS) to stay on a known build. The tags are
 listed at <https://github.com/echoots1/Hearth/pkgs/container/hearth>.
 
-**Back up.** Everything lives in the Postgres volume (`hearth-db`) plus two
-values from your settings: `APP_SECRET` (signs sessions and notification
-links) and `APP_ENCRYPTION_KEY` (without it the encrypted secrets in a dump,
-such as Plaid tokens and the push keys, can't be read). Keep a copy of your
-`.env` or YAML with the dump.
+**Back up.** Everything lives in two volumes: `hearth-db` (Postgres) and
+`hearth-data` (the generated session and encryption keys, two small files).
+Without the encryption key the secrets in a dump (integration keys, Plaid
+tokens, push keys, the Anthropic key) can't be read, so back up both. If you
+set `APP_SECRET` and `APP_ENCRYPTION_KEY` yourself, keep a copy of your
+`.env` or YAML instead.
 
 ```sh
 docker compose exec -T db pg_dump -U hearth hearth > hearth-$(date +%F).sql
+docker compose exec app sh -c 'cd /app/data && tar c .' > hearth-keys-$(date +%F).tar
 ```
 
 Put that line in cron and copy the files off the box. On TrueNAS a ZFS
 snapshot of the apps dataset covers the volume as well.
 
-**Restore** onto a fresh volume:
+**Restore** onto fresh volumes:
 
 ```sh
 docker compose down
-docker volume rm hearth_hearth-db          # the project name is the folder name; `docker volume ls` shows it
+docker volume rm hearth_hearth-db hearth_hearth-data   # the project name is the folder name; `docker volume ls` shows it
 docker compose up -d db
 docker compose exec -T db psql -U hearth hearth < hearth-2026-10-11.sql
 docker compose up -d
+docker compose exec -T app sh -c 'cd /app/data && tar x' < hearth-keys-2026-10-11.tar
+docker compose restart app
 ```
 
 **Logs and health.** `docker compose logs -f app` (TrueNAS: **Installed →
@@ -375,16 +387,16 @@ Budget screen), a daily pass Hearth runs itself at the time you set, and
 | Symptom | Likely cause |
 | --- | --- |
 | Connector says it can't reach the server | `APP_URL` host must be public over HTTPS. `curl -i https://<host>/mcp` should return `401`, not a proxy error. |
-| `403` from `/mcp` | The `Host` header isn't in the allow-list. The default is the host of `APP_URL`; set `MCP_ALLOWED_HOSTS` if you reach Hearth under another name. |
+| `403` from `/mcp` | The `Host` header isn't in the allow-list. The default is the host of the public URL; add other names under **More → Server → Extra MCP host names**. |
 | `401` from `/mcp` | Key missing, mistyped, or revoked. Create a new one. |
-| Push toggle fails | Not HTTPS, not installed to the home screen (iPhone), or `APP_ENCRYPTION_KEY` unset. |
+| Push toggle fails | The public URL is not HTTPS, or the app isn't installed to the home screen (iPhone). |
 | Nothing is syncing | **More → Jobs** shows every job's last run, summary or error. `JOBS_ENABLED=false` turns the scheduler off on purpose. |
 | `Bind for …:3000 failed: port is already allocated` | Another app on the host owns that port. Change the left side of the `ports:` line (for example `"3456:3000"`) and put the same port in `APP_URL` (`http://<host>:3456`) so links and the connector URL match. |
 | `connecting to Postgres … invalid port number` (or `invalid URL`) | `DATABASE_URL` is set and its password contains `@ : / # %`. Unset `DATABASE_URL` and use `POSTGRES_PASSWORD`, which takes any characters, or percent-encode the password in the URL. |
 | Container is `Up (unhealthy)` and connections are reset | The app is listening on another port inside the container, usually because `PORT` was changed to the host port. `docker logs` shows `hearth listening addr=0.0.0.0:NNNN`. Keep `PORT` at 3000 (or unset) and change only the left side of the `ports:` line. |
-| Container restarts in a loop | `docker compose logs app`. Usual causes: `APP_SECRET` shorter than 32 characters, Plaid keys set without `APP_ENCRYPTION_KEY`, or Postgres not ready yet (it settles within a minute). |
+| Container restarts in a loop | `docker compose logs app`. Usual causes: a wrong database password, `APP_SECRET` set but shorter than 32 characters, the data directory not writable (mount the `hearth-data` volume or set the keys), or Postgres not ready yet (it settles within a minute). |
 | `429 Too Many Requests` | Sign-in allows 10 attempts per 5 minutes per address and `/mcp` 300 requests per minute. Behind a proxy without `TRUST_PROXY=true` every client shares the proxy's address. |
-| Plaid link fails before Link opens | `APP_ENCRYPTION_KEY` unset, or `PLAID_ENV` doesn't match the key pair. |
+| Plaid link fails before Link opens | The environment chosen under **Bank feeds** doesn't match the key pair; **Check the keys** shows Plaid's own error. |
 
 The tool reference for the connector is in `docs/MCP.md`.
 
@@ -396,15 +408,20 @@ off for the optional sections.
 
 **App**
 
+Set these in the app under **More → Server** (owner only). The variables are
+fallbacks: a value saved in the app wins, blank in the app means the
+environment or the default applies.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `APP_URL` | `http://localhost:3000` | Public URL. `https` makes cookies Secure; notification links and the connector URL are built from it. |
+| `APP_URL` | `http://localhost:3000` | Public URL. `https` makes cookies Secure; notification links and the connector URL are built from it. In the app: **Public URL**. |
+| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits). In the app: **Behind a reverse proxy**. |
+| `MCP_ALLOWED_HOSTS` | derived from the public URL + localhost | Comma-separated `Host` values the MCP endpoint accepts. Setting it replaces the derived list; **Extra MCP host names** in the app adds to either. |
 | `PORT` | `3000` | Host port Compose publishes. The container always listens on 3000. |
 | `HEARTH_TAG` | `main` | Image tag Compose pulls: `main`, `latest`, `sha-<short>`, or a version once there are releases. |
-| `APP_SECRET` | required | 32+ random characters. Signs sessions and one-tap notification links. Changing it signs everyone out. |
-| `APP_ENCRYPTION_KEY` | blank | 32+ random characters. Encrypts everything secret at rest: integration keys saved in the app, Plaid tokens, the push keys, the Anthropic key. Required for any of those; changing it means re-entering them. |
-| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits). `true` behind a reverse proxy. |
-| `MCP_ALLOWED_HOSTS` | host of `APP_URL` + localhost | Comma-separated `Host` values the MCP endpoint accepts. Only needed when Hearth is reached under a name that isn't in `APP_URL`. |
+| `APP_SECRET` | generated | 32+ random characters. Signs sessions and one-tap notification links. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it signs everyone out. |
+| `APP_ENCRYPTION_KEY` | generated | 32+ random characters. Encrypts everything secret at rest. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it means re-entering the secrets. |
+| `HEARTH_DATA_DIR` | `/app/data` in the image, `./data` otherwise | Where generated keys are kept. The compose files mount the `hearth-data` volume there. |
 | `LOG_LEVEL` | `info,sqlx=warn` | Tracing filter. |
 | `LOG_FORMAT` | `text` | `json` for structured logs. |
 
@@ -422,9 +439,9 @@ off for the optional sections.
 | --- | --- | --- |
 | `JOBS_ENABLED` | `true` | Run the scheduler in this process. `false` for a web-only container. |
 | `SCHEDULER_TICK_SECONDS` | `30` | How often the scheduler looks for due jobs. |
-| `EVALUATE_MINUTES` | `15` | Alert evaluation interval. |
-| `PLAID_SYNC_MINUTES` | `60` | Plaid transaction sync interval. |
-| `PRIVACY_SYNC_MINUTES` | `10` | Privacy.com sync interval. |
+| `EVALUATE_MINUTES` | `15` | Alert evaluation interval. In the app: **More → Server → Schedules**. |
+| `PLAID_SYNC_MINUTES` | `60` | Plaid transaction sync interval. Also under **Schedules**. |
+| `PRIVACY_SYNC_MINUTES` | `10` | Privacy.com sync interval. Also under **Schedules**. |
 
 **Integrations (all optional, and all configurable in the app instead)**
 

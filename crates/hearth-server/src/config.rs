@@ -10,19 +10,89 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// From `APP_URL`, or the default. The app's own setting may override it
+    /// at runtime (see `services::server`).
     pub app_url: String,
     pub port: u16,
     pub trust_proxy: bool,
     pub database: DatabaseConfig,
     pub app_secret: String,
+    pub app_secret_source: SecretSource,
     pub app_encryption_key: Option<String>,
-    /// `Host` values the MCP endpoint accepts (DNS-rebinding guard).
-    pub mcp_allowed_hosts: Vec<String>,
+    pub app_encryption_key_source: SecretSource,
+    /// Where generated secrets live (`HEARTH_DATA_DIR`).
+    pub data_dir: std::path::PathBuf,
+    /// `MCP_ALLOWED_HOSTS` as given; `None` means derive from the public URL.
+    pub mcp_allowed_hosts: Option<Vec<String>>,
     pub jobs: JobsConfig,
     pub plaid: Option<PlaidConfig>,
     pub privacy: Option<PrivacyConfig>,
     pub ntfy: Option<NtfyConfig>,
     pub smtp: Option<SmtpConfig>,
+}
+
+/// Where a secret came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretSource {
+    /// Set in the environment.
+    Env,
+    /// Generated on first start and kept in the data directory.
+    Generated,
+}
+
+/// `name` from the environment, else a random value kept in `<data_dir>/<file>`
+/// (created on first use, mode 0600). Lets a deploy supply nothing but the
+/// database and still have stable session and encryption keys.
+fn secret_from_env_or_file(
+    name: &str,
+    file: &str,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<(String, SecretSource)> {
+    if let Some(v) = var(name) {
+        if v.len() < 32 {
+            bail!("{name} must be at least 32 characters");
+        }
+        return Ok((v, SecretSource::Env));
+    }
+    let path = data_dir.join(file);
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let existing = existing.trim().to_string();
+        if existing.len() >= 32 {
+            return Ok((existing, SecretSource::Generated));
+        }
+        bail!(
+            "{} exists but is too short to be a {name}; delete it to generate a new one",
+            path.display()
+        );
+    }
+    std::fs::create_dir_all(data_dir).with_context(|| {
+        format!(
+            "{name} is not set and the data directory {} cannot be created; set {name} or mount a writable volume there (HEARTH_DATA_DIR)",
+            data_dir.display()
+        )
+    })?;
+    let bytes: [u8; 48] = rand::random();
+    let value = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut f = options.open(&path).with_context(|| {
+            format!(
+                "{name} is not set and {} cannot be written; set {name} or mount a writable volume there (HEARTH_DATA_DIR)",
+                path.display()
+            )
+        })?;
+        f.write_all(value.as_bytes())?;
+    }
+    tracing::info!(file = %path.display(), "generated {name}; back up the data directory with the database");
+    Ok((value, SecretSource::Generated))
 }
 
 /// Where Postgres is. Either a full `DATABASE_URL`, or the pieces, so that a
@@ -194,16 +264,13 @@ fn list(name: &str, default: &[&str]) -> Vec<String> {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Config> {
-        let app_secret = required("APP_SECRET")?;
-        if app_secret.len() < 32 {
-            bail!("APP_SECRET must be at least 32 characters");
-        }
-        let app_encryption_key = var("APP_ENCRYPTION_KEY");
-        if let Some(k) = &app_encryption_key
-            && k.len() < 32
-        {
-            bail!("APP_ENCRYPTION_KEY must be at least 32 characters");
-        }
+        let data_dir =
+            std::path::PathBuf::from(var("HEARTH_DATA_DIR").unwrap_or_else(|| "data".into()));
+        let (app_secret, app_secret_source) =
+            secret_from_env_or_file("APP_SECRET", "app_secret", &data_dir)?;
+        let (key, app_encryption_key_source) =
+            secret_from_env_or_file("APP_ENCRYPTION_KEY", "app_encryption_key", &data_dir)?;
+        let app_encryption_key = Some(key);
 
         let plaid = match (var("PLAID_CLIENT_ID"), var("PLAID_SECRET")) {
             (Some(client_id), Some(secret)) => {
@@ -263,10 +330,7 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
         let port: u16 = parse("PORT", 3000)?;
-        let mcp_allowed_hosts = match var("MCP_ALLOWED_HOSTS") {
-            Some(_) => list("MCP_ALLOWED_HOSTS", &[]),
-            None => default_mcp_hosts(&app_url, port),
-        };
+        let mcp_allowed_hosts = var("MCP_ALLOWED_HOSTS").map(|_| list("MCP_ALLOWED_HOSTS", &[]));
 
         Ok(Config {
             app_url,
@@ -274,7 +338,10 @@ impl Config {
             trust_proxy: flag("TRUST_PROXY", false)?,
             database,
             app_secret,
+            app_secret_source,
             app_encryption_key,
+            app_encryption_key_source,
+            data_dir,
             mcp_allowed_hosts,
             jobs: JobsConfig {
                 enabled: flag("JOBS_ENABLED", true)?,
@@ -289,15 +356,11 @@ impl Config {
             smtp,
         })
     }
-
-    pub fn is_https(&self) -> bool {
-        self.app_url.starts_with("https://")
-    }
 }
 
-/// The host (with and without its port) from `APP_URL`, plus loopback on the
-/// listening port, so local and proxied access both pass the `Host` check.
-fn default_mcp_hosts(app_url: &str, port: u16) -> Vec<String> {
+/// The host (with and without its port) from the public URL, plus loopback on
+/// the listening port, so local and proxied access both pass the `Host` check.
+pub fn default_mcp_hosts(app_url: &str, port: u16) -> Vec<String> {
     let mut hosts = vec![
         "localhost".to_string(),
         format!("localhost:{port}"),

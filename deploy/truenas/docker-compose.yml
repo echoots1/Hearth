@@ -1,8 +1,9 @@
 # Hearth on TrueNAS SCALE (Apps → Discover Apps → ⋮ → Install via YAML).
 #
-# TrueNAS does not read a .env file, so every setting is written here as a
-# literal. Edit the lines marked CHANGE before installing (the URL, the two
-# secrets, the database password, the host port); everything else can stay. The same file works with plain `docker compose up -d`.
+# TrueNAS does not read a .env file, so the few settings that live here are
+# literals. Edit the lines marked CHANGE before installing (the database
+# password, and the host port if 3000 is taken); everything else is set in
+# the app. The same file works with plain `docker compose up -d`.
 # CHANGE: the database password, written once here and used by both
 # services below. Any characters are fine.
 x-postgres-password: &postgres-password "CHANGE-ME-db-password"
@@ -15,32 +16,30 @@ services:
     pull_policy: always
     restart: unless-stopped
     environment:
-      # CHANGE: the public URL the household reaches Hearth at. https:// makes
-      # cookies Secure and is required for the installable app, push and the
-      # Claude connector. Plain http://<nas-ip>:3000 is fine for a first look.
-      APP_URL: "http://truenas.local:3000"
-      # CHANGE: two different random strings, 32+ characters each
-      # (`openssl rand -base64 48` in any shell).
-      APP_SECRET: "CHANGE-ME-to-a-random-string-of-at-least-32-characters"
-      APP_ENCRYPTION_KEY: "CHANGE-ME-to-another-random-string-of-32-characters"
       # The bundled Postgres (the db service below).
       POSTGRES_HOST: "db"
       POSTGRES_USER: "hearth"
       POSTGRES_PASSWORD: *postgres-password
       POSTGRES_DB: "hearth"
-      # true when a reverse proxy (TrueNAS's own, Nginx Proxy Manager, Caddy,
-      # Traefik) sits in front of Hearth.
-      TRUST_PROXY: "false"
+      # Everything else is set inside the app after the first visit:
+      #   More → Server          public URL, reverse proxy, MCP hosts, schedules
+      #   More → Integrations    Plaid, Privacy.com
+      #   More → Notifications   ntfy, email
+      # The session and encryption keys are generated on first start and kept
+      # in the hearth-data volume. To supply your own instead, uncomment:
+      # APP_SECRET: "a-random-string-of-at-least-32-characters"
+      # APP_ENCRYPTION_KEY: "another-random-string-of-at-least-32-characters"
       # The app always listens on 3000 inside the container; to use a different
       # port on the NAS change only the left side of the ports: line below.
       JOBS_ENABLED: "true"
       LOG_LEVEL: "info,sqlx=warn"
-      # Plaid, Privacy.com, ntfy and email are set up inside the app
-      # (More → Integrations, More → Notifications), not here.
     ports:
       # CHANGE the left side if 3000 is taken on the NAS (for example
       # "3456:3000"). Never the right side.
       - "3000:3000"
+    volumes:
+      # Generated keys. Back this up together with the database volume.
+      - hearth-data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -65,3 +64,4 @@ services:
 
 volumes:
   hearth-db:
+  hearth-data:
