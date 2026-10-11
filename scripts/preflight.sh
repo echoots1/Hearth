@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pre-deploy checks for a Hearth instance, then a health probe if it is running.
 #
-#   scripts/preflight.sh            # check .env, then probe the running stack
+#   scripts/preflight.sh            # check the settings, then probe the running stack
+#   COMPOSE_FILE=deploy/truenas/docker-compose.yml scripts/preflight.sh   # another compose file
 #
 # Exit code is non-zero when something must be fixed before `docker compose up`.
 set -uo pipefail
@@ -26,22 +27,30 @@ else
   bad "docker compose plugin is missing"
 fi
 
-# ── .env ──────────────────────────────────────────────────────────────────
-if [ ! -f .env ]; then
-  bad ".env is missing (cp .env.example .env, then edit it)"
+# ── settings ──────────────────────────────────────────────────────────────
+# Read what the app container will actually get: .env, the shell, or literal
+# values written into the compose file all end up in `docker compose config`.
+resolved="$(docker compose config 2>/dev/null)"
+if [ -z "$resolved" ]; then
+  bad "docker compose config failed (run it yourself to see why)"
   echo; echo "Fix the items marked FAIL, then run again."; exit 1
 fi
-ok ".env present"
+if [ -f .env ]; then ok ".env present"; else warn "no .env file; using values from the shell and the compose file"; fi
 
-# Read KEY=VALUE lines without executing them.
-getenv() { sed -n "s/^[[:space:]]*$1=//p" .env | tail -1 | sed 's/^"\(.*\)"$/\1/'; }
+# First value of KEY under the app service's environment block.
+getenv() {
+  printf '%s\n' "$resolved" | awk -v key="$1" '
+    /^  [a-z]/ { svc=$1 }
+    svc=="app:" && $1==key":" { sub(/^[^:]*: */, ""); gsub(/^"|"$/, ""); print; exit }'
+}
 
 APP_URL="$(getenv APP_URL)"
 APP_SECRET="$(getenv APP_SECRET)"
 APP_ENCRYPTION_KEY="$(getenv APP_ENCRYPTION_KEY)"
-POSTGRES_PASSWORD="$(getenv POSTGRES_PASSWORD)"
+POSTGRES_PASSWORD="$(printf '%s\n' "$resolved" | awk '/^  db:/{s=1} s && $1=="POSTGRES_PASSWORD:"{sub(/^[^:]*: */,""); gsub(/^"|"$/,""); print; exit}')"
 TRUST_PROXY="$(getenv TRUST_PROXY)"
-PORT="$(getenv PORT)"; PORT="${PORT:-3000}"
+PORT="$(printf '%s\n' "$resolved" | awk '/published:/{gsub(/"/,"",$2); print $2; exit}')"; PORT="${PORT:-3000}"
+PLAID_CLIENT_ID="$(getenv PLAID_CLIENT_ID)"
 
 case "$APP_URL" in
   "")        bad "APP_URL is empty" ;;
@@ -54,7 +63,7 @@ esac
 
 if [ -z "$APP_SECRET" ]; then
   bad "APP_SECRET is empty (openssl rand -base64 48)"
-elif [ "$APP_SECRET" = "change-me-to-a-long-random-string-at-least-32-chars" ]; then
+elif [ "$APP_SECRET" = "change-me-to-a-long-random-string-at-least-32-chars" ] || case "$APP_SECRET" in CHANGE-ME*) true;; *) false;; esac; then
   bad "APP_SECRET is still the example value"
 elif [ "${#APP_SECRET}" -lt 32 ]; then
   bad "APP_SECRET is shorter than 32 characters"
@@ -64,6 +73,8 @@ fi
 
 if [ -z "$APP_ENCRYPTION_KEY" ]; then
   warn "APP_ENCRYPTION_KEY is empty: push notifications, Plaid and API mode stay off until it is set (set it now; rotating later means re-linking)"
+elif case "$APP_ENCRYPTION_KEY" in CHANGE-ME*) true;; *) false;; esac; then
+  bad "APP_ENCRYPTION_KEY is still the example value"
 elif [ "${#APP_ENCRYPTION_KEY}" -lt 32 ]; then
   bad "APP_ENCRYPTION_KEY is shorter than 32 characters"
 elif [ "$APP_ENCRYPTION_KEY" = "$APP_SECRET" ]; then
@@ -72,7 +83,7 @@ else
   ok "APP_ENCRYPTION_KEY set"
 fi
 
-if [ -z "$POSTGRES_PASSWORD" ] || [ "$POSTGRES_PASSWORD" = "hearth" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || [ "$POSTGRES_PASSWORD" = "hearth" ] || case "$POSTGRES_PASSWORD" in CHANGE-ME*) true;; *) false;; esac; then
   warn "POSTGRES_PASSWORD is the default; Postgres is not published outside the compose network, but change it anyway"
 else
   ok "POSTGRES_PASSWORD changed from the default"
@@ -84,7 +95,7 @@ case "$APP_URL" in
     else warn "APP_URL is https but TRUST_PROXY is not true; rate limits will see the proxy's address, not the client's"; fi ;;
 esac
 
-if grep -Eq '^[[:space:]]*(PLAID_CLIENT_ID|PLAID_SECRET)=.+' .env && [ -z "$APP_ENCRYPTION_KEY" ]; then
+if [ -n "$PLAID_CLIENT_ID" ] && [ -z "$APP_ENCRYPTION_KEY" ]; then
   bad "Plaid is configured but APP_ENCRYPTION_KEY is empty (the server refuses to start)"
 fi
 
@@ -96,7 +107,7 @@ fi
 echo
 if ! docker compose ps --status running --services 2>/dev/null | grep -qx app; then
   echo "Stack is not running. Next:"
-  echo "  docker compose up -d --build"
+  echo "  docker compose up -d"
   echo "  scripts/preflight.sh          # again, to probe health"
   exit 0
 fi

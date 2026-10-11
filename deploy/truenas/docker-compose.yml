@@ -1,0 +1,58 @@
+# Hearth on TrueNAS SCALE (Apps → Discover Apps → ⋮ → Install via YAML).
+#
+# TrueNAS does not read a .env file, so every setting is written here as a
+# literal. Edit the lines marked CHANGE before installing; everything else
+# can stay. The same file works with plain `docker compose up -d`.
+services:
+  app:
+    image: ghcr.io/echoots1/hearth:main
+    restart: unless-stopped
+    environment:
+      # CHANGE: the public URL the household reaches Hearth at. https:// makes
+      # cookies Secure and is required for the installable app, push and the
+      # Claude connector. Plain http://<nas-ip>:3000 is fine for a first look.
+      APP_URL: "http://truenas.local:3000"
+      # CHANGE: two different random strings, 32+ characters each
+      # (`openssl rand -base64 48` in any shell).
+      APP_SECRET: "CHANGE-ME-to-a-random-string-of-at-least-32-characters"
+      APP_ENCRYPTION_KEY: "CHANGE-ME-to-another-random-string-of-32-characters"
+      # CHANGE: must match POSTGRES_PASSWORD on the db service below.
+      DATABASE_URL: "postgres://hearth:CHANGE-ME-db-password@db:5432/hearth"
+      # true when a reverse proxy (TrueNAS's own, Nginx Proxy Manager, Caddy,
+      # Traefik) sits in front of Hearth.
+      TRUST_PROXY: "false"
+      PORT: "3000"
+      JOBS_ENABLED: "true"
+      LOG_LEVEL: "info,sqlx=warn"
+      # Optional integrations: see .env.example in the repo for the full list
+      # (Plaid, Privacy.com, ntfy, SMTP). Leave unset to keep them off.
+      # NTFY_TOPIC: ""
+      # SMTP_HOST: ""
+    ports:
+      # CHANGE the left side if 3000 is taken on the NAS.
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "hearth"
+      # CHANGE: same value as in DATABASE_URL above.
+      POSTGRES_PASSWORD: "CHANGE-ME-db-password"
+      POSTGRES_DB: "hearth"
+    volumes:
+      # A named volume lives in TrueNAS's apps dataset and is snapshotted with
+      # it. To keep the data on a dataset of your own instead, replace the line
+      # with a host path such as /mnt/tank/apps/hearth/postgres:/var/lib/postgresql/data
+      - hearth-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hearth -d hearth"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  hearth-db:

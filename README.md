@@ -33,25 +33,30 @@ chat, an assistant pass job, and pushed questions, with a monthly spend cap.
 - **Backend:** Rust (Axum, Tokio, sqlx on PostgreSQL 16, `rmcp` for MCP).
 - **UI:** TypeScript (Vite, React, Tailwind), mobile-first, installable PWA with
   Web Push, embedded in the binary. No native app.
-- **Packaging:** one Docker image plus Postgres in `docker-compose.yml`.
+- **Packaging:** one Docker image (published to GHCR) plus Postgres in `docker-compose.yml`.
 - **Money** is integer cents; **dates** are ISO strings in the household's
   timezone; every write is audited.
 
 ## Quick start (Docker)
+
+Prebuilt images for `linux/amd64` and `linux/arm64` are published at
+`ghcr.io/echoots1/hearth` on every push to `main`.
 
 ```sh
 cp .env.example .env
 # set APP_SECRET and APP_ENCRYPTION_KEY (openssl rand -base64 48 each),
 # APP_URL (https, behind your proxy), POSTGRES_PASSWORD
 scripts/preflight.sh
-docker compose up -d --build
+docker compose up -d
 ```
 
 Open the app URL; the first visit creates the owner account. To look around
 first, `docker compose exec app hearth seed` loads an obviously fake demo
-household. [`docs/SETUP.md`](docs/SETUP.md) covers connecting the Claude app,
-the scheduled daily pass, notifications, bank feeds and CSV import, and API
-mode.
+household. On TrueNAS SCALE, paste `deploy/truenas/docker-compose.yml` into
+**Apps → Discover Apps → ⋮ → Install via YAML**.
+[`docs/SETUP.md`](docs/SETUP.md) covers all of it, plus connecting the Claude
+app, the scheduled daily pass, notifications, bank feeds and CSV import, and
+API mode.
 
 ## Local development
 

@@ -9,10 +9,17 @@ October 2026; if a label has moved, the idea is the same.
 
 ## 1. Run it
 
-You need Docker with Compose, and a hostname with HTTPS that the household's
-phones can reach. HTTPS is required for the installable app and push
-notifications, and the Claude app must be able to reach the MCP endpoint over
-the public internet for the connector to work.
+You need Docker with Compose (or TrueNAS SCALE, below) and a hostname with
+HTTPS that the household's phones can reach. HTTPS is required for the
+installable app and push notifications, and the Claude app must be able to
+reach the MCP endpoint over the public internet for the connector to work.
+
+Hearth ships as a prebuilt image for `linux/amd64` and `linux/arm64`:
+`ghcr.io/echoots1/hearth:main` follows the `main` branch (`latest` is the
+same until there are releases; `sha-<short>` pins one commit). Postgres 16
+runs beside it. Nothing needs compiling.
+
+### Docker host with a `.env` file
 
 ```sh
 git clone https://github.com/echoots1/Hearth.git && cd Hearth
@@ -28,18 +35,79 @@ Edit `.env`. The lines that matter on day one:
 | `APP_ENCRYPTION_KEY` | Another random string. Encrypts the Plaid tokens, the VAPID push key and the optional Anthropic key at rest. Set it now; rotating it later means re-linking. |
 | `POSTGRES_PASSWORD` | Change it from the example. `DATABASE_URL` in compose follows it. |
 | `TRUST_PROXY` | `true` when behind a reverse proxy. |
+| `PORT` | The host port to publish (the container always listens on 3000). |
 
-Then check the file and start the stack. The first build compiles the Rust
-backend from source and takes a few minutes; later builds reuse the cache.
+Then check the settings and start the stack:
 
 ```sh
-scripts/preflight.sh            # checks .env for the usual mistakes
-docker compose up -d --build
+scripts/preflight.sh            # checks the settings for the usual mistakes
+docker compose up -d
 scripts/preflight.sh            # now also probes /api/health and tells you what's next
 ```
 
+`docker-compose.yml` reads `.env`; every `${VAR:-default}` in it can also be
+replaced with a literal value if you would rather keep everything in the
+compose file. The preflight reads whatever Compose resolves, so both ways get
+checked.
+
 Open the app URL: the first visit creates the owner account and names the
 household. Add people under **More → People**.
+
+To update later:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+### TrueNAS SCALE
+
+TrueNAS installs Compose apps from a YAML editor and does not read a `.env`
+file, so [`deploy/truenas/docker-compose.yml`](../deploy/truenas/docker-compose.yml)
+has every setting written inline.
+
+1. **Apps → Discover Apps**, then the **⋮** menu at the top right → **Install
+   via YAML**.
+2. Name the app `hearth`, paste the file, and edit the lines marked `CHANGE`:
+   `APP_URL`, the two secrets, the database password (in both places), and the
+   host port if 3000 is taken.
+3. **Install.** The app shows healthy once Postgres is up and Hearth has run
+   its migrations.
+
+Later edits to those values go through **Installed → hearth → Edit**, which
+reopens the same YAML. To update the image, **Installed → hearth → ⋮ →
+Update** (or re-save the YAML); the `main` tag moves with the repository.
+
+To load the demo household or run any other `hearth` command, open the
+TrueNAS shell (**System → Shell**) and run it inside the app container:
+
+```sh
+docker exec -it "$(docker ps -q -f name=hearth-app)" hearth seed
+```
+
+The TrueNAS file also works unchanged on any Docker host:
+`docker compose -f deploy/truenas/docker-compose.yml up -d`.
+
+### Demo data
+
+To look around with fake data first, load the demo household (it refuses a
+database that already has users):
+
+```sh
+docker compose exec app hearth seed
+```
+
+Sign in as `owner@example.com` / `demo-password`. Wipe it later with
+`hearth seed --force` on a fresh database, or just start over.
+
+### Build from source
+
+If you would rather not pull the published image, add the build override.
+The first build compiles the Rust backend and takes a few minutes; later
+builds reuse the cache.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 ### Reverse proxy
 
@@ -76,16 +144,6 @@ server {
 Only the proxy should be reachable from the internet; Postgres is never
 published, and port `3000` need not be either when the proxy runs on the
 same host.
-
-To look around with fake data first, load the demo household (it refuses a
-database that already has users):
-
-```sh
-docker compose exec app hearth seed
-```
-
-Sign in as `owner@example.com` / `demo-password`. Wipe it later with
-`hearth seed --force` on a fresh database, or just start over.
 
 ### Keep it
 
