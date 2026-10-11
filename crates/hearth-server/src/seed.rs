@@ -188,6 +188,8 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
     let g_bills = group(&ctx, &owner, "Bills", 3).await?;
     let g_debt = group(&ctx, &owner, "Debt & savings", 4).await?;
 
+    // Planned per paycheck: two paydays a month here, three in some months
+    // on a biweekly schedule.
     let c_paycheck = category(
         &ctx,
         &owner,
@@ -195,7 +197,17 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
         "Paycheck",
         CategorySign::Income,
         false,
-        Some(369_600),
+        Some(184_800),
+    )
+    .await?;
+    budget::update_category(
+        &ctx,
+        &owner,
+        c_paycheck,
+        budget::UpdateCategory {
+            plan_per_paycheck: Some(true),
+            ..Default::default()
+        },
     )
     .await?;
     let c_other_income = category(
@@ -1099,6 +1111,7 @@ async fn category(
             sign: Some(sign),
             note: None,
             is_everyday: Some(everyday),
+            plan_per_paycheck: None,
             sort_order: None,
             plan_cents: plan_cents.map(Cents::new),
         },

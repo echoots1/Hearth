@@ -327,22 +327,6 @@ pub async fn monthly_totals_by_category(ctx: &Ctx) -> Result<HashMap<Uuid, Cents
     Ok(totals)
 }
 
-/// Active bills due in `[from, until)`.
-pub async fn due_between(
-    ctx: &Ctx,
-    from: NaiveDate,
-    until: NaiveDate,
-) -> Result<Vec<RecurringBill>> {
-    Ok(sqlx::query_as::<_, RecurringBill>(
-        "select * from recurring_bills where household_id = $1 and status = 'active' and next_due >= $2 and next_due < $3 order by next_due",
-    )
-    .bind(ctx.household_id)
-    .bind(from)
-    .bind(until)
-    .fetch_all(&ctx.pool)
-    .await?)
-}
-
 /// After a transaction pays the bill: record the match and advance `next_due`
 /// past the transaction date. Canceled bills are never advanced.
 pub async fn record_match(

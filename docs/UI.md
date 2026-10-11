@@ -39,7 +39,9 @@ integrations, jobs).
      button records a fresh reported balance.
    - *Low point before <next payday>*: projected low point, days until
      payday, a pill with distance above/below the cash floor, and three
-     tiles explaining the deductions: bills due, everyday pace, planned.
+     tiles explaining the deductions: bills due (a bill past due with no
+     matching charge is still counted), everyday pace, planned; a link to
+     the timeline on the Plan tab.
 4. **Attention row** of pills: N alerts (orange when any critical), N
    questions from the AI, N to review. Each opens the Activity inbox
    filtered.
@@ -48,15 +50,21 @@ integrations, jobs).
 6. **Groups → categories** list. Each row: name; a context subtitle (due
    day, "paid", upcoming plan phase, pace, or the standing note); spent /
    plan; left (orange when over or pacing over); progress bar. Income rows
-   show "still expected" and a blue bar. Tap → Category detail.
+   show "still expected" and a blue bar. A category planned per paycheck
+   shows "$X × N paychecks" (N from the pay schedule, so a three-paycheck
+   month plans three). Tap → Category detail.
 
 ### Category detail
 
 - Hero: left this month (large), spent and plan, progress bar with a
   marker for how far through the month we are, three tiles: actual pace,
   plan pace, projected month-end.
-- Actions: Set plan · Move money · Ask Claude.
-- Plan phases: "Now" and any future phase ("After the move · from Jan").
+- Actions: Set plan · Move money · Ask Claude. For a per-paycheck
+  category the plan form takes the amount per paycheck and shows what the
+  month comes to.
+- Plan phases: "Now" and any future phase ("After the move · from Jan"),
+  per month or per paycheck.
+- Edit: name, group, everyday, plan per paycheck, archived.
 - Standing note: free text read by the AI and (for a few literal tokens)
   by the alert rules.
 - This month's transactions with source and how each was categorized
@@ -83,9 +91,16 @@ Tabs: **Inbox** · All activity · Done.
 
 A timeline of what's coming, soonest first, with the same card language:
 
-- **Up next**: recurring bills and planned one-offs between now and the next
-  paycheck, each with due date, amount, category, and whether it's already
-  posted. Mirrors the low-point tiles on the home screen.
+- **Cash ahead**: expected cash from today's estimate over 4, 8 or 13
+  weeks: now, the low point (and when), and the balance at the end, with a
+  pill for the distance from the cash floor at the low. Below, every row in
+  date order with the running balance after it: each paycheck (income
+  categories planned per paycheck, on each payday), each bill occurrence,
+  planned one-offs, and the everyday drain as one row per stretch between
+  them. A bill or one-off past its date with no matching charge is still
+  expected: it lands today, marked past due, and stays until the charge
+  posts. Tap a bill or one-off → edit. The stretch to the first paycheck is
+  the low point on the home screen.
 - **Recurring bills**: every active bill grouped by cadence (monthly ·
   every N months · yearly), with amount, next due, category, the card or
   account it hits, and a canceled/paused tag. Tap → edit; "+ Add a bill"

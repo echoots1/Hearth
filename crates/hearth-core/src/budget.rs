@@ -38,6 +38,23 @@ pub fn effective_plan(phases: &[PlanPhase], month: Month) -> Cents {
         .unwrap_or(Cents::ZERO)
 }
 
+/// The month's plan for a category: the phase amount, or, when the plan is
+/// per paycheck, that amount times the paydays in the month. A biweekly
+/// schedule gives some months three paychecks and the plan follows.
+pub fn monthly_plan(
+    phases: &[PlanPhase],
+    month: Month,
+    per_paycheck: bool,
+    paychecks_in_month: u32,
+) -> Cents {
+    let amount = effective_plan(phases, month);
+    if per_paycheck {
+        Cents(amount.0 * paychecks_in_month as i64)
+    } else {
+        amount
+    }
+}
+
 /// The first phase that starts *after* `month`, if any (the "after the change" column).
 pub fn next_phase(phases: &[PlanPhase], month: Month) -> Option<&PlanPhase> {
     phases
@@ -81,6 +98,8 @@ pub struct CategoryInput {
     pub is_everyday: bool,
     pub sort_order: i32,
     pub phases: Vec<PlanPhase>,
+    /// The phase amounts are per paycheck, not per month.
+    pub plan_per_paycheck: bool,
     /// Monthly-equivalent total of the active bills in this category (derived by the caller).
     pub bills_total_cents: Cents,
     /// Signed sum of this month's transactions in the category.
@@ -97,6 +116,8 @@ pub struct GroupInput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NextPhaseView {
     pub starts_month: Month,
+    /// The phase amount as stored: per month, or per paycheck when the
+    /// category's `plan_per_paycheck` is set.
     pub plan_cents: Cents,
     pub label: Option<String>,
 }
@@ -112,8 +133,15 @@ pub struct CategoryView {
     pub bills_total_cents: Cents,
     /// `max(0, bills_total − plan)`: how far the plan falls short of the bills alone.
     pub bills_over_plan_cents: Cents,
-    /// Plan for the month, unsigned.
+    /// Plan for the month, unsigned. For a per-paycheck plan this is
+    /// `per_paycheck_cents × paychecks_in_month`.
     pub plan_cents: Cents,
+    /// The phase amounts are per paycheck.
+    pub plan_per_paycheck: bool,
+    /// The phase amount when the plan is per paycheck; zero otherwise.
+    pub per_paycheck_cents: Cents,
+    /// Paydays in the month under the household's pay schedule.
+    pub paychecks_in_month: u32,
     /// Signed sum of transactions.
     pub actual_cents: Cents,
     /// Unsigned activity: `-actual` for spend, `actual` for income.
@@ -159,8 +187,8 @@ pub struct MonthView {
     pub uncategorized_cents: Cents,
 }
 
-pub fn category_view(c: &CategoryInput, month: Month) -> CategoryView {
-    let plan = effective_plan(&c.phases, month);
+pub fn category_view(c: &CategoryInput, month: Month, paychecks_in_month: u32) -> CategoryView {
+    let plan = monthly_plan(&c.phases, month, c.plan_per_paycheck, paychecks_in_month);
     let activity = match c.sign {
         Sign::Spend => -c.actual_cents,
         Sign::Income => c.actual_cents,
@@ -182,6 +210,13 @@ pub fn category_view(c: &CategoryInput, month: Month) -> CategoryView {
         bills_total_cents: c.bills_total_cents,
         bills_over_plan_cents: (c.bills_total_cents - plan).floor_zero(),
         plan_cents: plan,
+        plan_per_paycheck: c.plan_per_paycheck,
+        per_paycheck_cents: if c.plan_per_paycheck {
+            effective_plan(&c.phases, month)
+        } else {
+            Cents::ZERO
+        },
+        paychecks_in_month,
         actual_cents: c.actual_cents,
         activity_cents: activity,
         remaining_cents: remaining,
@@ -196,11 +231,13 @@ pub fn category_view(c: &CategoryInput, month: Month) -> CategoryView {
 
 /// Build the whole month view. Groups come out in `sort_order`, categories in
 /// `sort_order` then name. Uncategorized activity is reported separately.
+/// `paychecks_in_month` scales the per-paycheck plans (see [`monthly_plan`]).
 pub fn month_view(
     month: Month,
     groups: &[GroupInput],
     categories: &[CategoryInput],
     uncategorized_cents: Cents,
+    paychecks_in_month: u32,
 ) -> MonthView {
     let mut groups_sorted: Vec<&GroupInput> = groups.iter().collect();
     groups_sorted.sort_by(|a, b| {
@@ -228,7 +265,10 @@ pub fn month_view(
                 .cmp(&b.sort_order)
                 .then_with(|| a.name.cmp(&b.name))
         });
-        let views: Vec<CategoryView> = cats.iter().map(|c| category_view(c, month)).collect();
+        let views: Vec<CategoryView> = cats
+            .iter()
+            .map(|c| category_view(c, month, paychecks_in_month))
+            .collect();
 
         let mut plan = Cents::ZERO;
         let mut activity = Cents::ZERO;
@@ -366,6 +406,7 @@ mod tests {
                 bills_total_cents: Cents::ZERO,
                 sort_order: 0,
                 phases: vec![phase("2026-01", 5000, None)],
+                plan_per_paycheck: false,
                 actual_cents: Cents::dollars(2500),
             },
             CategoryInput {
@@ -378,6 +419,7 @@ mod tests {
                 bills_total_cents: Cents::ZERO,
                 sort_order: 1,
                 phases: vec![phase("2026-01", 800, None)],
+                plan_per_paycheck: false,
                 actual_cents: Cents::dollars(-900),
             },
             CategoryInput {
@@ -390,10 +432,11 @@ mod tests {
                 bills_total_cents: Cents::dollars(250),
                 sort_order: 0,
                 phases: vec![phase("2026-01", 200, None)],
+                plan_per_paycheck: false,
                 actual_cents: Cents::dollars(-50),
             },
         ];
-        let v = month_view(m("2026-03"), &groups, &cats, Cents(-1234));
+        let v = month_view(m("2026-03"), &groups, &cats, Cents(-1234), 2);
         assert_eq!(v.groups[0].name, "Income");
         assert_eq!(v.groups[1].categories[0].name, "Fuel"); // sort_order 0 first
         assert_eq!(
@@ -429,8 +472,54 @@ mod tests {
             bills_total_cents: Cents::ZERO,
             sort_order: 0,
             phases: vec![],
+            plan_per_paycheck: false,
             actual_cents: Cents(-1),
         };
-        assert_eq!(category_view(&c, m("2026-01")).used_bps, 10_000);
+        assert_eq!(category_view(&c, m("2026-01"), 2).used_bps, 10_000);
+    }
+
+    #[test]
+    fn per_paycheck_plan_follows_the_paydays() {
+        let c = CategoryInput {
+            id: Uuid::new_v4(),
+            group_id: Uuid::new_v4(),
+            name: "Paycheck".into(),
+            sign: Sign::Income,
+            note: String::new(),
+            is_everyday: false,
+            bills_total_cents: Cents::ZERO,
+            sort_order: 0,
+            phases: vec![
+                phase("2026-01", 1800, None),
+                phase("2026-04", 1900, Some("raise")),
+            ],
+            plan_per_paycheck: true,
+            actual_cents: Cents::dollars(3600),
+        };
+        // A two-paycheck month.
+        let two = category_view(&c, m("2026-02"), 2);
+        assert_eq!(two.plan_cents, Cents::dollars(3600));
+        assert_eq!(two.per_paycheck_cents, Cents::dollars(1800));
+        assert_eq!(two.paychecks_in_month, 2);
+        assert_eq!(two.remaining_cents, Cents::ZERO);
+        assert_eq!(
+            two.next_phase.as_ref().unwrap().plan_cents,
+            Cents::dollars(1900)
+        );
+        // A three-paycheck month: the plan and "still expected" follow.
+        let three = category_view(&c, m("2026-01"), 3);
+        assert_eq!(three.plan_cents, Cents::dollars(5400));
+        assert_eq!(three.remaining_cents, Cents::dollars(1800));
+        assert!(three.plan_per_paycheck);
+        // The later phase is per paycheck too.
+        assert_eq!(
+            monthly_plan(&c.phases, m("2026-05"), true, 2),
+            Cents::dollars(3800)
+        );
+        // A monthly plan ignores the payday count.
+        assert_eq!(
+            monthly_plan(&c.phases, m("2026-05"), false, 3),
+            Cents::dollars(1900)
+        );
     }
 }

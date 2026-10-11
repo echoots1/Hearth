@@ -302,6 +302,9 @@ pub struct Category {
     pub is_everyday: bool,
     pub sort_order: i32,
     pub is_archived: bool,
+    /// Plan phases are per paycheck; the month's plan is the amount times the
+    /// paydays in the month.
+    pub plan_per_paycheck: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

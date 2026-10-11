@@ -3,7 +3,7 @@ import { tool } from "./api";
 import { useQuery } from "./query";
 import type {
   Account, Alert, AssistantAction, BalanceOverview, Bill, Category, CategoryDetail, DebtComparison, DebtProjection,
-  Debt, Goal, Group, MonthView, PlannedItem, Question, ReviewItem, Rule, Settings, SinkingOverview, Today, Transaction, Page,
+  Debt, Goal, Group, MonthView, PlannedItem, Question, ReviewItem, Rule, Settings, SinkingOverview, TimelineView, Today, Transaction, Page,
 } from "./types";
 
 export const useToday = () => useQuery<Today>("household.today", () => tool("household.today"));
@@ -15,6 +15,7 @@ export const useCategoryDetail = (id: string | undefined, month?: string) =>
 export const useGroups = () =>
   useQuery<{ groups: Group[]; categories: Category[] }>("budget.groups", () => tool("budget.groups"));
 export const useBalance = () => useQuery<BalanceOverview>("balance.overview", () => tool("balance.overview"));
+export const useTimeline = (days: number) => useQuery<TimelineView>(`balance.timeline:${days}`, () => tool("balance.timeline", { days }));
 export const useAccounts = (inactive = false) =>
   useQuery<Account[]>(`accounts.list:${inactive}`, () => tool("accounts.list", { include_inactive: inactive }));
 export const useReviewQueue = () => useQuery<ReviewItem[]>("transactions.review_queue", () => tool("transactions.review_queue"));

@@ -170,6 +170,10 @@ function CashCard({ today, balance }: { today: Today; balance: BalanceOverview |
               <Stat dark label="Everyday pace" value={`−${dollars(lp.everyday_expected_cents)}`} />
               <Stat dark label="Planned" value={`−${dollars(lp.planned_items_cents)}`} />
             </div>
+            <div className="text-faint flex items-center justify-between text-[12px] font-semibold">
+              <span>{lp.bills.some((b) => b.overdue) ? `${lp.bills.filter((b) => b.overdue).length} past due, not posted yet · still counted` : " "}</span>
+              <Link to="/plan" className="text-ground font-bold">Timeline →</Link>
+            </div>
           </div>
         </>
       )}
@@ -241,6 +245,7 @@ export function describe(c: CategoryView, today: Today, isCurrent: boolean) {
   const pacingOver = !income && c.is_everyday && isCurrent && day >= 5 && c.plan_cents > 0 && projected > c.plan_cents * 1.1;
   const parts: string[] = [];
   let attention = false;
+  if (c.plan_per_paycheck) parts.push(`${dollars(c.per_paycheck_cents)} × ${c.paychecks_in_month} paycheck${c.paychecks_in_month === 1 ? "" : "s"}`);
   if (income) {
     if (isCurrent) parts.push(`next ${shortDate(today.next_payday)}`);
   } else {
@@ -254,7 +259,7 @@ export function describe(c: CategoryView, today: Today, isCurrent: boolean) {
       parts.push(`on pace for ${dollars(projected)} of ${dollars(c.plan_cents)}`);
       attention = true;
     }
-    if (c.next_phase) parts.push(`${dollars(c.next_phase.plan_cents)} from ${monthShort(c.next_phase.starts_month)}${c.next_phase.label ? ` · ${c.next_phase.label}` : ""}`);
+    if (c.next_phase) parts.push(`${dollars(c.next_phase.plan_cents)}${c.plan_per_paycheck ? "/paycheck" : ""} from ${monthShort(c.next_phase.starts_month)}${c.next_phase.label ? ` · ${c.next_phase.label}` : ""}`);
     if (parts.length === 0 && c.note) parts.push(c.note.length > 56 ? `${c.note.slice(0, 56)}…` : c.note);
     if (parts.length === 0 && c.is_everyday) parts.push("everyday");
   }
@@ -288,7 +293,7 @@ function CategoryRow({ c, today, month, isCurrent }: { c: CategoryView; today: T
 
 function AddCategorySheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const groups = useGroups();
-  const [f, setF] = useState({ name: "", group_id: "", group_name: "", plan: null as number | null, everyday: false, income: false });
+  const [f, setF] = useState({ name: "", group_id: "", group_name: "", plan: null as number | null, everyday: false, income: false, per_paycheck: false });
   const m = useMutation(
     () =>
       tool("budget.create_category", {
@@ -298,6 +303,7 @@ function AddCategorySheet({ open, onClose }: { open: boolean; onClose: () => voi
         plan_cents: f.plan,
         is_everyday: f.everyday,
         income: f.income,
+        plan_per_paycheck: f.per_paycheck,
       }),
     ["budget."],
   );
@@ -312,14 +318,15 @@ function AddCategorySheet({ open, onClose }: { open: boolean; onClose: () => voi
           </select>
         </Field>
         {!f.group_id && <Field label="New group name"><input className="field" value={f.group_name} onChange={(e) => setF({ ...f, group_name: e.target.value })} placeholder="Everyday" /></Field>}
-        <Field label="Plan this month"><MoneyInput value={f.plan} onChange={(c) => setF({ ...f, plan: c })} /></Field>
+        <Field label={f.per_paycheck ? "Plan per paycheck" : "Plan this month"}><MoneyInput value={f.plan} onChange={(c) => setF({ ...f, plan: c })} /></Field>
         <Toggle label="Everyday spending" hint="Counts toward the low point at its daily pace." checked={f.everyday} onChange={(v) => setF({ ...f, everyday: v })} />
         <Toggle label="Income" checked={f.income} onChange={(v) => setF({ ...f, income: v })} />
+        <Toggle label="Plan per paycheck" hint="The month's plan is the amount times its paydays, so a three-paycheck month plans three." checked={f.per_paycheck} onChange={(v) => setF({ ...f, per_paycheck: v })} />
       </div>
       <ErrorNote error={m.error} />
       <SheetActions>
         <button type="button" className="btn-light" onClick={onClose}>Cancel</button>
-        <button type="button" className="btn-dark" disabled={m.busy || !f.name.trim() || (!f.group_id && !f.group_name.trim())} onClick={async () => { if ((await m.run()) !== undefined) { setF({ name: "", group_id: "", group_name: "", plan: null, everyday: false, income: false }); onClose(); } }}>
+        <button type="button" className="btn-dark" disabled={m.busy || !f.name.trim() || (!f.group_id && !f.group_name.trim())} onClick={async () => { if ((await m.run()) !== undefined) { setF({ name: "", group_id: "", group_name: "", plan: null, everyday: false, income: false, per_paycheck: false }); onClose(); } }}>
           Add
         </button>
       </SheetActions>

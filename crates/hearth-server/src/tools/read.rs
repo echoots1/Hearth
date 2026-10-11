@@ -55,6 +55,12 @@ pub struct LimitArgs {
 }
 
 #[derive(Deserialize, JsonSchema, Default)]
+pub struct TimelineArgs {
+    /// How far ahead, in days from today (default 60, at most 366).
+    pub days: Option<i64>,
+}
+
+#[derive(Deserialize, JsonSchema, Default)]
 pub struct BillsListArgs {
     pub status: Option<BillStatus>,
     /// Only bills due before this date.
@@ -139,7 +145,7 @@ pub fn tools() -> Vec<ToolDef> {
     vec![
         tool!(
             "household.today",
-            "Today's date and month in the household timezone, days left in the month, the next payday, the assistant mode and autonomy settings, and the household name.",
+            "Today's date and month in the household timezone, days left in the month, the next payday, this month's paydays (a biweekly schedule gives some months three), the assistant mode and autonomy settings, and the household name.",
             Empty,
             writes = false,
             area = None,
@@ -154,6 +160,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "day_of_month": chrono::Datelike::day(&today), "days_in_month": month.days_in_month(),
                     "days_left": (month.last_day() - today).num_days(),
                     "next_payday": s.pay_schedule.next_payday(today),
+                    "paydays_this_month": s.pay_schedule.paydays_in_month(month),
                     "assistant": s.assistant,
                     "cash_floor_cents": s.cash_floor_cents,
                 })
@@ -169,7 +176,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "budget.month",
-            "The budget for a month: groups → categories with plan, spent (activity), left, pace, bill totals and the next plan phase; plus household totals and uncategorized activity.",
+            "The budget for a month: groups → categories with plan, spent (activity), left, pace, bill totals and the next plan phase; plus household totals and uncategorized activity. A category with `plan_per_paycheck` plans per paycheck: its `plan_cents` is `per_paycheck_cents × paychecks_in_month`, so a three-paycheck month plans more.",
             MonthArgs,
             writes = false,
             area = None,
@@ -238,11 +245,19 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "balance.overview",
-            "Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, everyday pace, planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance.",
+            "Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, including any past due that have not posted; everyday pace; planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance.",
             Empty,
             writes = false,
             area = None,
             |tc, _a| { services::balance::overview(&tc.ctx).await? }
+        ),
+        tool!(
+            "balance.timeline",
+            "Expected cash day by day from the current estimate: every coming paycheck (income categories planned per paycheck, on each payday), each bill occurrence, planned one-offs and the everyday drain, in date order with the running balance after each; plus the low point in the window and headroom over the cash floor. A bill or one-off past its date with no matching charge is still expected: it lands today, flagged `overdue`, and stays until the charge posts.",
+            TimelineArgs,
+            writes = false,
+            area = None,
+            |tc, a| { services::balance::timeline(&tc.ctx, a.days).await? }
         ),
         tool!(
             "accounts.list",

@@ -215,6 +215,31 @@ impl PaySchedule {
     }
 }
 
+impl PaySchedule {
+    /// Every payday strictly after `after` and on or before `through`, in order.
+    pub fn paydays_between(&self, after: NaiveDate, through: NaiveDate) -> Vec<NaiveDate> {
+        let mut out = Vec::new();
+        let mut d = after;
+        loop {
+            d = self.next_payday(d);
+            if d > through {
+                return out;
+            }
+            out.push(d);
+        }
+    }
+
+    /// The paydays that fall in a month. A biweekly schedule gives most
+    /// months two and some three; weekly gives four or five.
+    pub fn paydays_in_month(&self, month: Month) -> Vec<NaiveDate> {
+        let before = month
+            .first_day()
+            .pred_opt()
+            .expect("a month's first day has a predecessor");
+        self.paydays_between(before, month.last_day())
+    }
+}
+
 fn next_periodic(anchor: NaiveDate, period_days: i64, today: NaiveDate) -> NaiveDate {
     let diff = (today - anchor).num_days();
     // number of whole periods from anchor to today (floor), then step one past.
@@ -465,6 +490,45 @@ mod tests {
             s.next_payday(d("2025-12-20")),
             d("2025-12-19") + chrono::Duration::days(14)
         ); // before anchor
+    }
+
+    #[test]
+    fn paydays_in_a_month() {
+        // Fridays every two weeks from Jan 2, 2026: Jan 2, 16, 30 → three paychecks.
+        let s = PaySchedule::Biweekly {
+            anchor: d("2026-01-02"),
+        };
+        assert_eq!(
+            s.paydays_in_month("2026-01".parse().unwrap()),
+            vec![d("2026-01-02"), d("2026-01-16"), d("2026-01-30")]
+        );
+        assert_eq!(
+            s.paydays_in_month("2026-02".parse().unwrap()),
+            vec![d("2026-02-13"), d("2026-02-27")]
+        );
+        assert_eq!(
+            s.paydays_between(d("2026-01-16"), d("2026-02-13")),
+            vec![d("2026-01-30"), d("2026-02-13")]
+        );
+        assert!(
+            s.paydays_between(d("2026-01-16"), d("2026-01-29"))
+                .is_empty()
+        );
+        let w = PaySchedule::Weekly {
+            anchor: d("2026-03-06"),
+        };
+        assert_eq!(w.paydays_in_month("2026-05".parse().unwrap()).len(), 5);
+        assert_eq!(w.paydays_in_month("2026-04".parse().unwrap()).len(), 4);
+        let semi = PaySchedule::Semimonthly { days: [15, 31] };
+        assert_eq!(
+            semi.paydays_in_month("2026-02".parse().unwrap()),
+            vec![d("2026-02-15"), d("2026-02-28")]
+        );
+        let m = PaySchedule::Monthly { day: 1 };
+        assert_eq!(
+            m.paydays_in_month("2026-02".parse().unwrap()),
+            vec![d("2026-02-01")]
+        );
     }
 
     #[test]
