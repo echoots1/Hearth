@@ -6,6 +6,9 @@
 services:
   app:
     image: ghcr.io/echoots1/hearth:main
+    # Pull the newest `main` every time the app is (re)deployed, so
+    # Installed → hearth → Edit → Save is the update button.
+    pull_policy: always
     restart: unless-stopped
     environment:
       # CHANGE: the public URL the household reaches Hearth at. https:// makes
