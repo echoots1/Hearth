@@ -3,23 +3,28 @@ name: Image
 # Builds the container image for linux/amd64 and linux/arm64 on native runners
 # and publishes a multi-arch manifest to GitHub Container Registry.
 #
-# Two channels:
-#   development  ghcr.io/<owner>/hearth:main        a push to main that changes the app
-#                ghcr.io/<owner>/hearth:sha-<short> the same push, pinned
-#   release      ghcr.io/<owner>/hearth:<version>   a release (below)
+# Three channels:
+#   development  ghcr.io/<owner>/hearth:main          a push to main that changes the app
+#                ghcr.io/<owner>/hearth:sha-<short>   the same push, pinned
+#   qa           ghcr.io/<owner>/hearth:<version>-rc.N a release candidate (below)
+#                ghcr.io/<owner>/hearth:qa            moves with each candidate
+#   release      ghcr.io/<owner>/hearth:<version>     a release (below)
 #                ghcr.io/<owner>/hearth:<major.minor>
-#                ghcr.io/<owner>/hearth:latest      moves only with a release
+#                ghcr.io/<owner>/hearth:latest        moves only with a release
 #
-# Production installs follow `latest` (the compose files default to it), so a
-# merge to main never reaches them until someone cuts a release.
+# Production installs follow `latest` (the compose files default to it), a QA
+# copy follows `qa`, so a merge to main never reaches either until someone
+# cuts a candidate or a release.
 #
-# Cutting a release, either way:
-#   - Actions → Image → "Run workflow" on main with `release` = X.Y.Z (what an
-#     agent does: `gh workflow run image.yml -f release=X.Y.Z`). The run checks
-#     that Cargo.toml and web/package.json carry that version, creates and
-#     pushes the vX.Y.Z tag itself, builds, and publishes the GitHub Release.
-#   - Or push the tag by hand: `scripts/release.sh X.Y.Z`. The tag push runs
-#     the same jobs.
+# Cutting a candidate or a release, either way:
+#   - Actions → Image → "Run workflow" on main with `release` = X.Y.Z-rc.N (a
+#     candidate: `:qa`, GitHub pre-release) or X.Y.Z (a release: `:latest`,
+#     GitHub Release). An agent does `gh workflow run image.yml -f release=…`.
+#     The run checks that Cargo.toml and web/package.json carry X.Y.Z, creates
+#     and pushes the tag itself, builds, and publishes the release entry.
+#   - Or push the tag by hand: `scripts/release.sh X.Y.Z[-rc.N]`. The tag push
+#     runs the same jobs.
+#   Promoting a candidate is dispatching X.Y.Z on the same commit.
 # Only what ends up in the image triggers a development build: the Rust and
 # web sources, the Cargo manifests, the Dockerfile and this workflow. A newer
 # push to main cancels a build still running for an older one; a release run
@@ -40,7 +45,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "Version to release (X.Y.Z, must match Cargo.toml and web/package.json). Leave empty for a development build of main."
+        description: "X.Y.Z for a release (:latest) or X.Y.Z-rc.N for a QA candidate (:qa). X.Y.Z must match Cargo.toml and web/package.json. Leave empty for a development build of main."
         required: false
         type: string
 
@@ -59,6 +64,8 @@ jobs:
     permissions:
       contents: write # to push the release tag on a dispatched release
     outputs:
+      # dev | qa | release
+      channel: ${{ steps.decide.outputs.channel }}
       is_release: ${{ steps.decide.outputs.is_release }}
       version: ${{ steps.decide.outputs.version }}
       minor: ${{ steps.decide.outputs.minor }}
@@ -76,39 +83,51 @@ jobs:
           set -euo pipefail
           cargo_v="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
           npm_v="$(python3 -c 'import json; print(json.load(open("web/package.json"))["version"])')"
-          version=""
+          # A version is X.Y.Z (release) or X.Y.Z-rc.N (QA candidate); the
+          # manifests must carry X.Y.Z either way.
+          classify() {
+            if [[ "$1" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+              base="${BASH_REMATCH[1]}"; channel=qa
+            elif [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              base="$1"; channel=release
+            else
+              echo "::error::'$1' is neither X.Y.Z nor X.Y.Z-rc.N"; exit 1
+            fi
+            [[ "$cargo_v" == "$base" && "$npm_v" == "$base" ]] \
+              || { echo "::error::$1 needs Cargo.toml and web/package.json at $base, but they say $cargo_v and $npm_v; merge the bump first"; exit 1; }
+          }
+          version=""; channel=dev; base=""
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
-            [[ "$cargo_v" == "$version" && "$npm_v" == "$version" ]] \
-              || { echo "::error::tag ${GITHUB_REF_NAME} but Cargo.toml says $cargo_v and web/package.json says $npm_v"; exit 1; }
+            classify "$version"
           elif [[ -n "$REQUESTED" ]]; then
             [[ "${GITHUB_REF}" == "refs/heads/main" ]] \
-              || { echo "::error::releases are cut from main, not ${GITHUB_REF_NAME}"; exit 1; }
+              || { echo "::error::candidates and releases are cut from main, not ${GITHUB_REF_NAME}"; exit 1; }
             version="${REQUESTED#v}"
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-              || { echo "::error::'$REQUESTED' is not X.Y.Z"; exit 1; }
-            [[ "$cargo_v" == "$version" && "$npm_v" == "$version" ]] \
-              || { echo "::error::Cargo.toml says $cargo_v and web/package.json says $npm_v; merge the bump to $version first"; exit 1; }
+            classify "$version"
             if git ls-remote --exit-code --tags origin "v$version" >/dev/null 2>&1; then
-              echo "::error::tag v$version already exists; a release is built once"; exit 1
+              echo "::error::tag v$version already exists; a version is built once (use the next rc number, or the next version)"; exit 1
             fi
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "v$version" -m "Hearth v$version"
             git push origin "v$version"
-            echo "tagged v$version at $(git rev-parse --short HEAD)"
+            echo "tagged v$version at $(git rev-parse --short HEAD) ($channel)"
           fi
-          if [[ -n "$version" ]]; then
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
-            echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_release=false" >> "$GITHUB_OUTPUT"
-            echo "version=none" >> "$GITHUB_OUTPUT"
-            echo "minor=none" >> "$GITHUB_OUTPUT"
-            echo "tag=" >> "$GITHUB_OUTPUT"
-          fi
+          {
+            echo "channel=$channel"
+            if [[ -n "$version" ]]; then
+              echo "is_release=true"
+              echo "version=$version"
+              echo "minor=${base%.*}"
+              echo "tag=v$version"
+            else
+              echo "is_release=false"
+              echo "version=none"
+              echo "minor=none"
+              echo "tag="
+            fi
+          } >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.platform }}
@@ -204,12 +223,15 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             # development: the branch name (`main`) and the commit
-            type=ref,event=branch,enable=${{ needs.prepare.outputs.is_release != 'true' }}
+            type=ref,event=branch,enable=${{ needs.prepare.outputs.channel == 'dev' }}
             type=sha,prefix=sha-
-            # release: the version, its major.minor, and `latest`
+            # candidate or release: the exact version (0.2.0-rc.1 / 0.2.0)
             type=raw,value=${{ needs.prepare.outputs.version }},enable=${{ needs.prepare.outputs.is_release == 'true' }}
-            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ needs.prepare.outputs.is_release == 'true' }}
-            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_release == 'true' }}
+            # candidate: the moving `qa` tag
+            type=raw,value=qa,enable=${{ needs.prepare.outputs.channel == 'qa' }}
+            # release: major.minor and the moving `latest` tag
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ needs.prepare.outputs.channel == 'release' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.channel == 'release' }}
 
       - name: Create the multi-arch manifest
         working-directory: /tmp/digests
@@ -231,10 +253,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Create the release with generated notes
+      - name: Create the release entry with generated notes
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
           OWNER: ${{ github.repository_owner }}
         run: |
           image="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/hearth"
@@ -242,5 +265,10 @@ jobs:
             echo "release $TAG already exists"
             exit 0
           fi
-          gh release create "$TAG" --verify-tag --generate-notes --title "Hearth $TAG" \
-            --notes "Image: \`$image:${TAG#v}\` (also \`$image:latest\`). Update: \`docker compose pull && docker compose up -d\`, or Edit → Save on TrueNAS. Back up first; migrations are forward-only."
+          if [[ "$CHANNEL" == "qa" ]]; then
+            gh release create "$TAG" --verify-tag --generate-notes --prerelease --title "Hearth $TAG (QA candidate)" \
+              --notes "QA candidate. Image: \`$image:${TAG#v}\` (also \`$image:qa\`). A QA copy on the \`qa\` tag picks it up with \`docker compose pull && docker compose up -d\`. When it checks out, run the Image workflow with the plain version to promote it to \`latest\`."
+          else
+            gh release create "$TAG" --verify-tag --generate-notes --title "Hearth $TAG" \
+              --notes "Image: \`$image:${TAG#v}\` (also \`$image:latest\`). Update: \`docker compose pull && docker compose up -d\`, or Edit → Save on TrueNAS. Back up first; migrations are forward-only."
+          fi

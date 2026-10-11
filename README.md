@@ -41,8 +41,9 @@ chat, an assistant pass job, and pushed questions, with a monthly spend cap.
 
 Prebuilt images for `linux/amd64` and `linux/arm64` are published at
 `ghcr.io/echoots1/hearth`. `latest` (what the compose files pull) moves only
-when a version is tagged; `main` follows every merge for people who want to
-try things first. See [Releases](https://github.com/echoots1/Hearth/releases).
+when a version is released; `qa` carries the release candidate before it; and
+`main` follows every merge for people who want to try things first. See
+[Releases](https://github.com/echoots1/Hearth/releases).
 
 ```sh
 cp .env.example .env     # set POSTGRES_PASSWORD; everything else is set in the app

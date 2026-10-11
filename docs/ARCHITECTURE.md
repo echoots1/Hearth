@@ -158,9 +158,10 @@ later it is a separate small service that talks to the same MCP surface.
   files and embedded in the binary. Ships as a PWA (manifest, service
   worker, Web Push); no native client.
 - **Packaging:** one Docker image plus Postgres in `docker-compose.yml`;
-  runs behind any reverse proxy; migrations run on start. Two image
-  channels: `:main` follows every merge, `:latest` and `:X.Y.Z` move only
-  when a release is tagged, and the compose files pull `latest`.
+  runs behind any reverse proxy; migrations run on start. Three image
+  channels: `:main` follows every merge, `:qa` moves with each release
+  candidate (`vX.Y.Z-rc.N`), `:latest` and `:X.Y.Z` move only with a
+  release, and the compose files pull `latest`.
 - **Conventions:** money is integer cents (`bigint` / `i64`, never a float;
   clippy denies float arithmetic); calendar dates are ISO strings in the
   household timezone; months are `YYYY-MM`; every write is audited with the

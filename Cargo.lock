@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "anyhow",

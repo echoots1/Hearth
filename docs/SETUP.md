@@ -29,11 +29,14 @@ installable app and push notifications, and the Claude app must be able to
 reach the MCP endpoint over the public internet for the connector to work.
 
 Hearth ships as a prebuilt image for `linux/amd64` and `linux/arm64` with
-two channels: `ghcr.io/echoots1/hearth:latest` is the **release** channel
-(it moves only when a version is tagged, and the compose files pull it) and
+three channels: `ghcr.io/echoots1/hearth:latest` is the **release** channel
+(it moves only when a version is released, and the compose files pull it),
+`:qa` is the **QA** channel (it moves when a release candidate is cut, for
+a second copy of the app you try things on before they are released), and
 `:main` is the **development** build that follows every merge. A version
-such as `:0.1.0` or a commit's `:sha-<short>` pins one build. Postgres 16
-runs beside it. Nothing needs compiling.
+such as `:0.1.0`, a candidate such as `:0.2.0-rc.1`, or a commit's
+`:sha-<short>` pins one build. Postgres 16 runs beside it. Nothing needs
+compiling.
 
 ### Docker host with a `.env` file
 
@@ -222,10 +225,31 @@ automatically when the new version starts; take a backup first (below),
 because migrations are forward-only and the way back from a bad update is
 the backup, not an older image.
 
+**Run a QA copy.** A second, separate Hearth that pulls `qa` lets you try a
+release candidate against a copy of your data before it reaches `latest`.
+It is its own stack: own database, own keys, own port, own public URL (or
+none). On a Docker host, a second compose project does it:
+
+```sh
+mkdir hearth-qa && cd hearth-qa
+cp /path/to/Hearth/docker-compose.yml /path/to/Hearth/.env.example .
+cp .env.example .env     # set POSTGRES_PASSWORD, HEARTH_TAG=qa, PORT=3001
+docker compose -p hearth-qa up -d
+```
+
+The project name keeps its volumes (`hearth-qa_hearth-db`, …) apart from
+production's. On TrueNAS, install the same YAML a second time as an app
+named `hearth-qa` with `image: ghcr.io/echoots1/hearth:qa` and another host
+port; TrueNAS scopes the volumes per app. To test against real data,
+restore a production backup into the QA stack (below) rather than pointing
+QA at the production database. Each candidate is listed as a pre-release at
+<https://github.com/echoots1/Hearth/releases>; `docker compose -p hearth-qa
+pull && docker compose -p hearth-qa up -d` moves QA to the newest one.
+
 **Follow development instead.** `HEARTH_TAG=main` in `.env` (or `:main` on
 the TrueNAS `image:` line) follows every merge to `main` that changes the
-app; it is where things land before they are released. Documentation and
-deploy-file changes do not rebuild it.
+app; it is where things land before they are cut as a candidate.
+Documentation and deploy-file changes do not rebuild it.
 
 **Pin or roll back.** Every release is also tagged by version (`0.1.0`,
 `0.1`) and every build by commit (`sha-<short>`, the first seven characters
@@ -448,7 +472,7 @@ environment or the default applies.
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits); the last entry, which the proxy appended, is used. In the app: **Behind a reverse proxy**. |
 | `MCP_ALLOWED_HOSTS` | derived from the public URL + localhost | Comma-separated `Host` values the MCP endpoint accepts. Setting it replaces the derived list; **Extra MCP host names** in the app adds to either. |
 | `PORT` | `3000` | Host port Compose publishes. The container always listens on 3000. |
-| `HEARTH_TAG` | `latest` | Image tag Compose pulls: `latest` (releases), `main` (every merge), a version such as `0.1.0`, or `sha-<short>`. |
+| `HEARTH_TAG` | `latest` | Image tag Compose pulls: `latest` (releases), `qa` (release candidates), `main` (every merge), a version such as `0.1.0` or `0.2.0-rc.1`, or `sha-<short>`. |
 | `APP_SECRET` | generated | 32+ random characters. Signs sessions and one-tap notification links. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it signs everyone out. |
 | `APP_ENCRYPTION_KEY` | generated | 32+ random characters. Encrypts everything secret at rest; the actual key is derived with argon2id and a per-install salt kept in the database, so a passphrase you typed yourself is not brute-forceable from a dump. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it means re-entering the secrets. |
 | `HEARTH_DATA_DIR` | `/app/data` in the image, `./data` otherwise | Where generated keys are kept. The compose files mount the `hearth-data` volume there. |

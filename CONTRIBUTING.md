@@ -16,10 +16,10 @@ Thanks for helping. Hearth is small on purpose; keep it that way.
   `docs:`, `plaid:`, `privacy:`, `notify:`), one concern each.
 - **PRs:** describe what changed and how you tested it. CI must be green.
 - **Branches and releases:** work happens on `main` through PRs; `main`
-  always builds and publishes the `:main` development image. Production
-  follows `:latest`, which moves only when a version is tagged: bump the
-  version in `Cargo.toml` and `web/package.json` in a PR, merge it, then
-  either run the Image workflow on `main` with `release` = `X.Y.Z` (Actions
-  → Image → Run workflow, or `gh workflow run image.yml -f release=X.Y.Z`)
-  or push the tag with `scripts/release.sh X.Y.Z`. `CLAUDE.md` has the
-  full checklist.
+  always builds and publishes the `:main` development image. QA follows
+  `:qa` and production follows `:latest`; both move only when a version is
+  tagged: bump the version in `Cargo.toml` and `web/package.json` in a PR,
+  merge it, then run the Image workflow on `main` with `release` =
+  `X.Y.Z-rc.N` (candidate → `:qa`) or `X.Y.Z` (release → `:latest`), via
+  Actions → Image → Run workflow, `gh workflow run image.yml -f release=…`,
+  or `scripts/release.sh`. `CLAUDE.md` has the full checklist.
