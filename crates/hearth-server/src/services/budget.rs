@@ -147,8 +147,11 @@ pub struct CreateCategory {
     pub sign: Option<CategorySign>,
     pub note: Option<String>,
     pub is_everyday: Option<bool>,
+    /// The plan is per paycheck (times the paydays in the month).
+    pub plan_per_paycheck: Option<bool>,
     pub sort_order: Option<i32>,
-    /// Optional initial plan for the current month.
+    /// Optional initial plan for the current month (per paycheck when
+    /// `plan_per_paycheck`).
     pub plan_cents: Option<Cents>,
 }
 
@@ -158,8 +161,8 @@ pub async fn create_category(ctx: &Ctx, actor: &Actor, c: CreateCategory) -> Res
     }
     let mut tx = ctx.pool.begin().await?;
     let cat = sqlx::query_as::<_, Category>(
-        "insert into categories (household_id, group_id, name, sign, note, is_everyday, sort_order)
-         values ($1, $2, $3, $4, $5, $6, coalesce($7, (select coalesce(max(sort_order), 0) + 10 from categories where group_id = $2)))
+        "insert into categories (household_id, group_id, name, sign, note, is_everyday, sort_order, plan_per_paycheck)
+         values ($1, $2, $3, $4, $5, $6, coalesce($7, (select coalesce(max(sort_order), 0) + 10 from categories where group_id = $2)), $8)
          returning *",
     )
     .bind(ctx.household_id)
@@ -169,6 +172,7 @@ pub async fn create_category(ctx: &Ctx, actor: &Actor, c: CreateCategory) -> Res
     .bind(c.note.unwrap_or_default())
     .bind(c.is_everyday.unwrap_or(false))
     .bind(c.sort_order)
+    .bind(c.plan_per_paycheck.unwrap_or(false))
     .fetch_one(&mut *tx)
     .await
     .map_err(unique_to_conflict)?;
@@ -207,6 +211,7 @@ pub struct UpdateCategory {
     pub is_everyday: Option<bool>,
     pub sort_order: Option<i32>,
     pub is_archived: Option<bool>,
+    pub plan_per_paycheck: Option<bool>,
 }
 
 pub async fn update_category(
@@ -219,7 +224,8 @@ pub async fn update_category(
     let after = sqlx::query_as::<_, Category>(
         "update categories set group_id = coalesce($3, group_id), name = coalesce($4, name), sign = coalesce($5, sign),
          note = coalesce($6, note), is_everyday = coalesce($7, is_everyday),
-         sort_order = coalesce($8, sort_order), is_archived = coalesce($9, is_archived), updated_at = now()
+         sort_order = coalesce($8, sort_order), is_archived = coalesce($9, is_archived),
+         plan_per_paycheck = coalesce($10, plan_per_paycheck), updated_at = now()
          where household_id = $1 and id = $2 returning *",
     )
     .bind(ctx.household_id)
@@ -231,6 +237,7 @@ pub async fn update_category(
     .bind(u.is_everyday)
     .bind(u.sort_order)
     .bind(u.is_archived)
+    .bind(u.plan_per_paycheck)
     .fetch_one(&ctx.pool)
     .await
     .map_err(unique_to_conflict)?;
@@ -353,19 +360,10 @@ pub async fn actuals_for_month(ctx: &Ctx, month: Month) -> Result<HashMap<Option
     Ok(rows.into_iter().collect())
 }
 
-/// Build the inputs the pure month view needs.
-pub async fn category_inputs(
-    ctx: &Ctx,
-    month: Month,
-) -> Result<(Vec<GroupInput>, Vec<CategoryInput>, Cents)> {
-    let groups = list_groups(ctx).await?;
-    let cats = list_categories(ctx, false).await?;
-    let plans = list_plans(ctx, None).await?;
-    let actuals = actuals_for_month(ctx, month).await?;
-    let bill_totals = super::bills::monthly_totals_by_category(ctx).await?;
-
+/// Every category's plan phases, keyed by category.
+pub async fn phases_by_category(ctx: &Ctx) -> Result<HashMap<Uuid, Vec<PlanPhase>>> {
     let mut phases: HashMap<Uuid, Vec<PlanPhase>> = HashMap::new();
-    for p in plans {
+    for p in list_plans(ctx, None).await? {
         let Ok(m) = p.starts_month.parse::<Month>() else {
             continue;
         };
@@ -375,6 +373,19 @@ pub async fn category_inputs(
             label: p.label,
         });
     }
+    Ok(phases)
+}
+
+/// Build the inputs the pure month view needs.
+pub async fn category_inputs(
+    ctx: &Ctx,
+    month: Month,
+) -> Result<(Vec<GroupInput>, Vec<CategoryInput>, Cents)> {
+    let groups = list_groups(ctx).await?;
+    let cats = list_categories(ctx, false).await?;
+    let mut phases = phases_by_category(ctx).await?;
+    let actuals = actuals_for_month(ctx, month).await?;
+    let bill_totals = super::bills::monthly_totals_by_category(ctx).await?;
     let group_inputs = groups
         .iter()
         .map(|g| GroupInput {
@@ -395,6 +406,7 @@ pub async fn category_inputs(
             sort_order: c.sort_order,
             bills_total_cents: bill_totals.get(&c.id).copied().unwrap_or(Cents::ZERO),
             phases: phases.remove(&c.id).unwrap_or_default(),
+            plan_per_paycheck: c.plan_per_paycheck,
             actual_cents: actuals.get(&Some(c.id)).copied().unwrap_or(Cents::ZERO),
         })
         .collect();
@@ -404,7 +416,15 @@ pub async fn category_inputs(
 
 pub async fn month_view(ctx: &Ctx, month: Month) -> Result<MonthView> {
     let (groups, cats, uncategorized) = category_inputs(ctx, month).await?;
-    Ok(budget::month_view(month, &groups, &cats, uncategorized))
+    let settings = super::settings::load(ctx).await?;
+    let paychecks = settings.pay_schedule.paydays_in_month(month).len() as u32;
+    Ok(budget::month_view(
+        month,
+        &groups,
+        &cats,
+        uncategorized,
+        paychecks,
+    ))
 }
 
 /// Map a Postgres unique violation to a 409-style error.

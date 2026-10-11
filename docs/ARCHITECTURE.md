@@ -40,8 +40,8 @@ Eleven nouns. Everything on screen and every MCP tool is made of these.
 | --- | --- | --- |
 | **Account** | A place money sits: checking, savings, cash, card. Has a user-reported balance with an as-of time, and optionally a bank-synced one; the newer of the two anchors the running estimate. | Cash card, More → Accounts |
 | **Transaction** | One movement of money: date, description, signed amount (negative = out), source, category, pending flag, note. | Category detail, Activity |
-| **Category** | A bucket with a sign (income/spend), a group, a standing note, flags (`everyday`, `due_day`), and a **plan** made of phases. | Budget list rows |
-| **Plan phase** | "From month M, plan N per month." The current phase is the plan; the next phase is the "after the change" column. | Category detail → Plan |
+| **Category** | A bucket with a sign (income/spend), a group, a standing note, flags (`everyday`, `plan_per_paycheck`), and a **plan** made of phases. | Budget list rows |
+| **Plan phase** | "From month M, plan N per month," or per paycheck: then the month's plan is N times the paydays in it, so a biweekly income plans three paychecks in a three-payday month. The current phase is the plan; the next phase is the "after the change" column. | Category detail → Plan |
 | **Rule** | Pattern → category (or ignore). Runs on every new transaction; no match → review. | More → Rules, "make a rule" chips |
 | **Recurring bill** | A commitment that repeats: name, amount, cadence (monthly / every N months / yearly), next due date, the category it posts to, the account or card it hits, a match pattern, status (active / canceled / paused). Monthly bills drive the category plan and the bills-due-before-payday number; non-monthly bills drive the sinking-fund set-aside; canceled bills that charge again raise an alert. | Plan tab, category subtitle ("due 14th"), low-point tile |
 | **Planned item** | A one-off approved ahead of time so it isn't flagged when it posts. | Plan tab, low-point tile |
@@ -50,10 +50,13 @@ Eleven nouns. Everything on screen and every MCP tool is made of these.
 | **Goal** | A savings target: name, target amount, optional target date, the account it accrues in, the monthly contribution (a category plan). Projection: date reached at current pace, or pace needed for the date. Debt-free is an implicit goal. | Goals tab → Savings |
 | **Alert / Question** | Something that needs a human: raised by a job (alert) or by the AI (question). A question may carry a **proposal**: a structured change ("set Groceries plan to $900", "switch to avalanche") that applying approves in one tap. Lifecycle open → notified → ack → done. | Activity inbox, attention pills |
 
-Derived, never stored: running estimate, projected low point, category
-rollups, pace, suggested category plans (sum of a category's bills), the
-sinking-fund should-have, debt projections and strategy comparisons, goal
-projections, each bill's next due date after a match. Later phase: net worth
+Derived, never stored: running estimate, projected low point, the cash
+timeline (paychecks, bill occurrences, one-offs and the everyday drain with
+the running balance after each; a bill past due with no matching charge
+stays on it until the charge posts), category rollups, pace, suggested
+category plans (sum of a category's bills), the sinking-fund should-have,
+debt projections and strategy comparisons, goal projections, each bill's
+next due date after a match. Later phase: net worth
 series from account and debt balance snapshots.
 
 ## 3. How a day works — ✓ decided
@@ -277,7 +280,7 @@ tools paginate.
 | household | `household.today` (date, month, days left, next payday, autonomy setting, assistant mode), `household.settings` |
 | assistant | `assistant.work` (everything waiting for the assistant, in one call, with suggestions), `assistant.summary_write` (leave a short report of a pass that shows in Activity) |
 | budget | `budget.month` (groups → categories: plan, spent, left, pace, next phase; totals), `budget.category` (detail + this month's transactions + bills in it) |
-| balance | `balance.overview` (per-account estimate with ages, household cash, low point with its components, headroom over floor) |
+| balance | `balance.overview` (per-account estimate with ages, household cash, low point with its components, headroom over floor), `balance.timeline` (expected cash day by day to a horizon, with the running balance after each paycheck, bill, one-off and everyday stretch) |
 | transactions | `transactions.list` (filters), `transactions.get`, `transactions.review_queue` |
 | bills | `bills.list` (active / paused / canceled, upcoming before payday, by category), `bills.get` |
 | planned | `planned.list` |

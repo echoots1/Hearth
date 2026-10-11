@@ -23,6 +23,8 @@ export type Today = {
   days_in_month: number;
   days_left: number;
   next_payday: string;
+  /** Paydays in the current month; a biweekly schedule gives some months three. */
+  paydays_this_month: string[];
   household: string;
   timezone: string;
   currency: string;
@@ -64,7 +66,11 @@ export type CategoryView = {
   sign: "income" | "spend";
   note: string;
   is_everyday: boolean;
+  /** For a per-paycheck plan: `per_paycheck_cents × paychecks_in_month`. */
   plan_cents: number;
+  plan_per_paycheck: boolean;
+  per_paycheck_cents: number;
+  paychecks_in_month: number;
   actual_cents: number;
   activity_cents: number;
   remaining_cents: number;
@@ -105,6 +111,7 @@ export type Category = {
   sign: "income" | "spend";
   note: string;
   is_everyday: boolean;
+  plan_per_paycheck: boolean;
   sort_order: number;
   is_archived: boolean;
 };
@@ -186,7 +193,7 @@ export type LowPoint = {
   next_payday: string;
   days_until_payday: number;
   estimate_cents: number;
-  bills: { bill_id: string; name: string; due_date: string; amount_cents: number }[];
+  bills: { bill_id: string; name: string; due_date: string; amount_cents: number; overdue: boolean }[];
   bills_due_cents: number;
   everyday: { category_id: string; name: string; amount_cents: number; pace_cents_per_day: number }[];
   everyday_expected_cents: number;
@@ -218,6 +225,43 @@ export type BalanceOverview = {
   cash_floor_cents: number;
   headroom_cents: number;
   low_point: LowPoint | null;
+};
+
+export type TimelineEntry = {
+  date: string;
+  kind: "paycheck" | "bill" | "planned" | "everyday";
+  label: string;
+  /** Signed: income positive, money out negative. */
+  amount_cents: number;
+  balance_after_cents: number;
+  overdue: boolean;
+  due_date: string | null;
+  days: number | null;
+  bill_id: string | null;
+  planned_item_id: string | null;
+  category_id: string | null;
+};
+
+export type TimelineView = {
+  household_estimate_cents: number;
+  cash_floor_cents: number;
+  headroom_cents: number;
+  timeline: {
+    today: string;
+    until: string;
+    start_cents: number;
+    end_cents: number;
+    low_cents: number;
+    low_date: string;
+    income_cents: number;
+    bills_cents: number;
+    planned_cents: number;
+    everyday_cents: number;
+    paydays: string[];
+    overdue_count: number;
+    unscheduled_income_monthly_cents: number;
+    entries: TimelineEntry[];
+  };
 };
 
 export type SinkingOverview = {

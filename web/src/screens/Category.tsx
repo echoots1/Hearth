@@ -56,7 +56,7 @@ export function CategoryScreen() {
           </div>
           <div className="text-muted flex flex-col items-end gap-0.5 text-[13px] font-semibold">
             <span>{income ? "received" : "spent"} {dollars(des.spent)}</span>
-            <span>plan {dollars(v.plan_cents)}</span>
+            <span>plan {dollars(v.plan_cents)}{v.plan_per_paycheck && ` · ${v.paychecks_in_month} × ${dollars(v.per_paycheck_cents)}`}</span>
           </div>
         </div>
         <Progress bps={v.used_bps} color={income ? "income" : des.attention ? "attention" : "ink"} marker={isCurrent ? monthPct : undefined} thick />
@@ -132,7 +132,7 @@ function PlanPhases({ d, today }: { d: CategoryDetail; today: Today }) {
             <span className="text-[15px] font-bold">{current.label || "Now"}</span>
             <span className="text-muted text-[12px] font-semibold">since {monthShort(current.starts_month)}</span>
           </div>
-          <span className="text-[15px] font-extrabold">{dollars(current.amount_cents)} / mo</span>
+          <span className="text-[15px] font-extrabold">{dollars(current.amount_cents)} / {d.category.plan_per_paycheck ? "paycheck" : "mo"}</span>
         </div>
       )}
       {future.map((p) => (
@@ -142,7 +142,7 @@ function PlanPhases({ d, today }: { d: CategoryDetail; today: Today }) {
             <span className="text-muted text-[12px] font-semibold">from {monthShort(p.starts_month)}</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-muted text-[15px] font-extrabold">{dollars(p.amount_cents)} / mo</span>
+            <span className="text-muted text-[15px] font-extrabold">{dollars(p.amount_cents)} / {d.category.plan_per_paycheck ? "paycheck" : "mo"}</span>
             {owner && <button type="button" className="text-muted text-[12px] font-bold underline" onClick={() => del.run(p.id)} disabled={del.busy}>remove</button>}
           </div>
         </div>
@@ -210,16 +210,18 @@ function TransactionsCard({ d, month }: { d: CategoryDetail; month: string }) {
 }
 
 function SetPlanSheet({ open, onClose, d, today, month }: { open: boolean; onClose: () => void; d: CategoryDetail; today: Today; month: string }) {
-  const [amount, setAmount] = useState<number | null>(d.view.plan_cents);
+  const perPaycheck = d.view.plan_per_paycheck;
+  const base = perPaycheck ? d.view.per_paycheck_cents : d.view.plan_cents;
+  const [amount, setAmount] = useState<number | null>(base);
   const [starts, setStarts] = useState(month);
   const [label, setLabel] = useState("");
-  useEffect(() => { setAmount(d.view.plan_cents); setStarts(month); }, [d.view.plan_cents, month, open]);
+  useEffect(() => { setAmount(base); setStarts(month); }, [base, month, open]);
   const m = useMutation(() => tool("budget.set_plan", { category_id: d.category.id, amount_cents: amount, starts_month: starts, label: label || null }), ["budget."]);
   const options = [month, addMonths(month, 1), addMonths(month, 2), addMonths(month, 3)].filter((x, i, a) => a.indexOf(x) === i && x >= today.month);
   return (
     <Sheet open={open} onClose={onClose} title={`Plan for ${d.view.name}`}>
       <div className="flex flex-col gap-3">
-        <Field label="Amount per month"><MoneyInput value={amount} onChange={setAmount} autoFocus /></Field>
+        <Field label={perPaycheck ? "Amount per paycheck" : "Amount per month"} hint={perPaycheck && amount != null ? `${d.view.paychecks_in_month} paycheck${d.view.paychecks_in_month === 1 ? "" : "s"} in ${monthShort(month)} → ${dollars(amount * d.view.paychecks_in_month)}` : undefined}><MoneyInput value={amount} onChange={setAmount} autoFocus /></Field>
         <Field label="Starting" hint="A plan runs from its start month until the next phase.">
           <select className="field" value={starts} onChange={(e) => setStarts(e.target.value)}>
             {options.map((o) => <option key={o} value={o}>{monthLabel(o)}{o === today.month ? " (now)" : ""}</option>)}
@@ -244,8 +246,11 @@ function MoveMoneySheet({ open, onClose, d, month }: { open: boolean; onClose: (
     if (!to || !amount) return;
     const other = await tool<CategoryDetail>("budget.category", { id: to, month });
     const sign = direction === "out" ? -1 : 1;
-    await tool("budget.set_plan", { category_id: d.category.id, amount_cents: Math.max(0, d.view.plan_cents + sign * amount), starts_month: month });
-    await tool("budget.set_plan", { category_id: to, amount_cents: Math.max(0, other.view.plan_cents - sign * amount), starts_month: month });
+    // A per-paycheck plan is stored per paycheck: move the monthly amount's share of one paycheck.
+    const next = (v: CategoryDetail["view"], delta: number) =>
+      v.plan_per_paycheck ? Math.max(0, v.per_paycheck_cents + Math.round(delta / Math.max(1, v.paychecks_in_month))) : Math.max(0, v.plan_cents + delta);
+    await tool("budget.set_plan", { category_id: d.category.id, amount_cents: next(d.view, sign * amount), starts_month: month });
+    await tool("budget.set_plan", { category_id: to, amount_cents: next(other.view, -sign * amount), starts_month: month });
   }, ["budget."]);
   return (
     <Sheet open={open} onClose={onClose} title="Move money">
@@ -296,8 +301,8 @@ function AskClaudeSheet({ open, onClose, d, today, isCurrent }: { open: boolean;
 
 function EditCategorySheet({ open, onClose, d }: { open: boolean; onClose: () => void; d: CategoryDetail }) {
   const groups = useGroups();
-  const [f, setF] = useState({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, is_archived: d.category.is_archived });
-  useEffect(() => setF({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, is_archived: d.category.is_archived }), [d.category, open]);
+  const [f, setF] = useState({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, plan_per_paycheck: d.category.plan_per_paycheck, is_archived: d.category.is_archived });
+  useEffect(() => setF({ name: d.category.name, group_id: d.category.group_id, is_everyday: d.category.is_everyday, plan_per_paycheck: d.category.plan_per_paycheck, is_archived: d.category.is_archived }), [d.category, open]);
   const nav = useNavigate();
   const m = useMutation(() => tool("budget.update_category", { category_id: d.category.id, ...f }), ["budget."]);
   return (
@@ -310,6 +315,7 @@ function EditCategorySheet({ open, onClose, d }: { open: boolean; onClose: () =>
           </select>
         </Field>
         <Toggle label="Everyday spending" hint="Counts toward the low point at its daily pace." checked={f.is_everyday} onChange={(v) => setF({ ...f, is_everyday: v })} />
+        <Toggle label="Plan per paycheck" hint="The plan amount is per paycheck; the month's plan is that times its paydays, so a three-paycheck month plans three. Paychecks then show on the cash timeline." checked={f.plan_per_paycheck} onChange={(v) => setF({ ...f, plan_per_paycheck: v })} />
         <Toggle label="Archived" hint="Hidden from the budget; history stays." checked={f.is_archived} onChange={(v) => setF({ ...f, is_archived: v })} />
       </div>
       <ErrorNote error={m.error} />

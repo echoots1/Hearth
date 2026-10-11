@@ -101,12 +101,16 @@ external_id)` where not null.
 
 **categories** — `group_id`, `name` (unique among non-archived), `sign`,
 `note` (free text for the assistant; jobs honor only `[no-alerts]`,
-`[no-large-charge]`, `[no-pace]`), `is_everyday`, `sort_order`,
-`is_archived`. No due day: bills carry due dates.
+`[no-large-charge]`, `[no-pace]`), `is_everyday`, `plan_per_paycheck`,
+`sort_order`, `is_archived`. No due day: bills carry due dates.
 
 **category_plans** — `category_id`, `starts_month`, `amount_cents` (≥ 0,
 unsigned), `label`, `note`. Unique `(category_id, starts_month)`. Effective
-plan for month M = row with greatest `starts_month ≤ M`, else 0.
+plan for month M = row with greatest `starts_month ≤ M`, else 0. When the
+category has `plan_per_paycheck`, the amount is per paycheck and the month's
+plan is `amount × paydays in M` under the household pay schedule (a biweekly
+schedule gives some months three); the paychecks also land on the cash
+timeline on their paydays.
 
 ### Recurring bills
 

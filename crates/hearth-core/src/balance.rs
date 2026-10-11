@@ -187,6 +187,9 @@ pub struct BillComponent {
     pub name: String,
     pub due_date: NaiveDate,
     pub amount_cents: Cents,
+    /// Past due and not matched to a charge yet: it still has to come out,
+    /// so it stays in the low point until it does.
+    pub overdue: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,8 +227,10 @@ pub struct LowPoint {
 
 /// Projected low point between `today` and `next_payday` (exclusive).
 ///
-/// - Bills: active recurring bills due in `[today, next_payday)` that have not
-///   posted yet contribute their amount.
+/// - Bills: active recurring bills due before `next_payday` that have not
+///   posted yet contribute their amount. A bill past its due date with no
+///   matching charge is still coming (its `next_due` only advances when the
+///   charge posts), so it counts too, flagged `overdue`.
 /// - Everyday: `is_everyday` spend categories contribute
 ///   `pace × days_until_payday` where
 ///   `pace = max(spent / days_elapsed, plan / days_in_month)`.
@@ -246,12 +251,13 @@ pub fn projected_low_point(
 
     let mut bills_out: Vec<BillComponent> = bills
         .iter()
-        .filter(|b| !b.posted && b.due >= today && b.due < next_payday && b.amount_cents.0 > 0)
+        .filter(|b| !b.posted && b.due < next_payday && b.amount_cents.0 > 0)
         .map(|b| BillComponent {
             bill_id: b.id,
             name: b.name.clone(),
             due_date: b.due,
             amount_cents: b.amount_cents,
+            overdue: b.due < today,
         })
         .collect();
     bills_out.sort_by_key(|b| b.due_date);
@@ -521,6 +527,7 @@ mod tests {
             bill("Water", "2026-03-12", 60, true),   // already posted → 0
             bill("Today", "2026-03-10", 10, false),  // due today counts
             bill("Payday", "2026-03-20", 99, false), // due on payday does not
+            bill("Missed", "2026-03-04", 40, false), // overdue, not posted: still coming
         ];
         let planned = vec![
             PlannedForLowPoint {
@@ -554,15 +561,18 @@ mod tests {
         ];
         let lp = projected_low_point(Cents::dollars(2000), today, payday, &cats, &bills, &planned);
         assert_eq!(lp.days_until_payday, 10);
-        assert_eq!(lp.bills.len(), 2);
-        assert_eq!(lp.bills[0].name, "Today");
-        assert_eq!(lp.bills_due_cents, Cents::dollars(160));
+        assert_eq!(lp.bills.len(), 3);
+        assert_eq!(lp.bills[0].name, "Missed");
+        assert!(lp.bills[0].overdue);
+        assert_eq!(lp.bills[1].name, "Today");
+        assert!(!lp.bills[1].overdue);
+        assert_eq!(lp.bills_due_cents, Cents::dollars(200));
         assert_eq!(lp.everyday.len(), 2);
         assert_eq!(lp.everyday[0].pace_cents_per_day, Cents::dollars(30));
         assert_eq!(lp.everyday_expected_cents, Cents::dollars(400));
         assert_eq!(lp.planned.len(), 2);
         assert_eq!(lp.planned[0].item, "Overdue thing");
         assert_eq!(lp.planned_items_cents, Cents::dollars(425));
-        assert_eq!(lp.low_point_cents, Cents::dollars(2000 - 160 - 400 - 425));
+        assert_eq!(lp.low_point_cents, Cents::dollars(2000 - 200 - 400 - 425));
     }
 }

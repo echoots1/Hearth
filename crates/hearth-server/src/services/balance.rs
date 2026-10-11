@@ -5,6 +5,9 @@ use hearth_core::balance::{
     PlannedForLowPoint, TxnForEstimate,
 };
 use hearth_core::money::Cents;
+use hearth_core::timeline::{
+    BillForTimeline, CategoryForTimeline, PlannedForTimeline, Timeline, cash_timeline,
+};
 use serde::Serialize;
 
 use super::{Ctx, Result};
@@ -102,20 +105,122 @@ pub async fn low_point(ctx: &Ctx, estimate: Cents) -> Result<LowPoint> {
             outstanding: true,
         })
         .collect();
-    let bills: Vec<BillForLowPoint> = super::bills::due_between(ctx, today, payday)
-        .await?
-        .into_iter()
-        .map(|b| BillForLowPoint {
-            id: b.id,
-            name: b.name,
-            due: b.next_due,
-            amount_cents: b.amount_cents,
-            posted: false,
-        })
-        .collect();
+    // Every active bill due before payday, including ones past due with no
+    // matching charge yet: `next_due` only moves when the charge posts.
+    let bills: Vec<BillForLowPoint> = super::bills::list(
+        ctx,
+        &super::bills::ListQuery {
+            status: Some(crate::db::models::BillStatus::Active),
+            due_before: Some(payday),
+            ..Default::default()
+        },
+    )
+    .await?
+    .into_iter()
+    .map(|b| BillForLowPoint {
+        id: b.id,
+        name: b.name,
+        due: b.next_due,
+        amount_cents: b.amount_cents,
+        posted: false,
+    })
+    .collect();
     Ok(balance::projected_low_point(
         estimate, today, payday, &cats, &bills, &planned,
     ))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineView {
+    pub household_estimate_cents: Cents,
+    pub cash_floor_cents: Cents,
+    /// `timeline.low − cash_floor`: positive = room above the floor.
+    pub headroom_cents: Cents,
+    pub timeline: Timeline,
+}
+
+/// Default and longest horizons for the cash timeline, in days.
+pub const TIMELINE_DEFAULT_DAYS: i64 = 60;
+pub const TIMELINE_MAX_DAYS: i64 = 366;
+
+/// Expected cash day by day from the current estimate: paychecks, every bill
+/// occurrence, planned one-offs and the everyday drain, with the running
+/// balance after each, for `days` days from today.
+pub async fn timeline(ctx: &Ctx, days: Option<i64>) -> Result<TimelineView> {
+    let days = days
+        .unwrap_or(TIMELINE_DEFAULT_DAYS)
+        .clamp(1, TIMELINE_MAX_DAYS);
+    let settings = super::settings::load(ctx).await?;
+    let accounts = account_estimates(ctx).await?;
+    let estimate = balance::household_estimate(&accounts);
+    let today = ctx.today();
+    let until = today + chrono::Duration::days(days);
+    let mut phases = super::budget::phases_by_category(ctx).await?;
+    let actuals = super::budget::actuals_for_month(ctx, ctx.month()).await?;
+    let categories: Vec<CategoryForTimeline> = super::budget::list_categories(ctx, false)
+        .await?
+        .into_iter()
+        .map(|c| {
+            let sign: hearth_core::budget::Sign = c.sign.into();
+            let actual = actuals.get(&Some(c.id)).copied().unwrap_or(Cents::ZERO);
+            CategoryForTimeline {
+                id: c.id,
+                name: c.name,
+                sign,
+                is_everyday: c.is_everyday,
+                plan_per_paycheck: c.plan_per_paycheck,
+                phases: phases.remove(&c.id).unwrap_or_default(),
+                activity_cents: match sign {
+                    hearth_core::budget::Sign::Spend => -actual,
+                    hearth_core::budget::Sign::Income => actual,
+                },
+            }
+        })
+        .collect();
+    let bills: Vec<BillForTimeline> = super::bills::list(
+        ctx,
+        &super::bills::ListQuery {
+            status: Some(crate::db::models::BillStatus::Active),
+            ..Default::default()
+        },
+    )
+    .await?
+    .into_iter()
+    .map(|b| BillForTimeline {
+        id: b.id,
+        name: b.name,
+        next_due: b.next_due,
+        cadence_months: b.cadence_months.max(1) as u32,
+        amount_cents: b.amount_cents,
+        category_id: b.category_id,
+    })
+    .collect();
+    let planned: Vec<PlannedForTimeline> = super::planned::outstanding(ctx)
+        .await?
+        .into_iter()
+        .map(|p| PlannedForTimeline {
+            id: p.id,
+            item: p.item,
+            date: p.date,
+            amount_cents: p.amount_cents,
+            category_id: p.category_id,
+        })
+        .collect();
+    let timeline = cash_timeline(
+        estimate,
+        today,
+        until,
+        &settings.pay_schedule,
+        &categories,
+        &bills,
+        &planned,
+    );
+    Ok(TimelineView {
+        household_estimate_cents: estimate,
+        cash_floor_cents: settings.cash_floor_cents,
+        headroom_cents: timeline.low_cents - settings.cash_floor_cents,
+        timeline,
+    })
 }
 
 pub async fn overview(ctx: &Ctx) -> Result<BalanceOverview> {

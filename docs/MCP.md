@@ -107,19 +107,20 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `assistant.actions` | What the assistant changed in Driver mode, newest first, with undo availability. |
 | `assistant.work` | Everything waiting for the assistant in one call: transactions to categorize (with suggestions), answered questions since the last pass, pending proposals, open alerts, overdue bills, categories whose bills exceed their plan, stale balances, and the autonomy settings. |
 | `audit.list` | The audit log (every write with actor, before and after). |
-| `balance.overview` | Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, everyday pace, planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance. |
+| `balance.overview` | Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, including any past due that have not posted; everyday pace; planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance. |
+| `balance.timeline` | Expected cash day by day from the current estimate: every coming paycheck (income categories planned per paycheck, on each payday), each bill occurrence, planned one-offs and the everyday drain, in date order with the running balance after each; plus the low point in the window and headroom over the cash floor. A bill or one-off past its date with no matching charge is still expected: it lands today, flagged `overdue`, and stays until the charge posts. |
 | `bills.get` | One recurring bill with its splits. |
 | `bills.list` | Recurring bills (active by default) with monthly equivalents and category names. `upcoming` limits to bills due before the next payday. |
 | `budget.category` | One category in detail: its view for the month, its plan phases, the bills in it, and this month's transactions. |
 | `budget.groups` | Category groups and every category (including archived when asked). |
-| `budget.month` | The budget for a month: groups → categories with plan, spent (activity), left, pace, bill totals and the next plan phase; plus household totals and uncategorized activity. |
+| `budget.month` | The budget for a month: groups → categories with plan, spent (activity), left, pace, bill totals and the next plan phase; plus household totals and uncategorized activity. A category with `plan_per_paycheck` plans per paycheck: its `plan_cents` is `per_paycheck_cents × paychecks_in_month`, so a three-paycheck month plans more. |
 | `debts.compare` | Payoff month and total interest under avalanche, snowball and custom order, side by side. |
 | `debts.list` | Debts with interest per day and per month. |
 | `debts.projection` | Payoff projection under the current strategy: payoff month and total interest per debt, debt-free month. |
 | `debts.what_if` | What a one-time charge on a debt, or an extra monthly payment, does to payoff dates and interest. |
 | `goals.list` | Savings goals with projections (reach month at current pace, pace needed for the target date). |
 | `household.settings` | All household settings (pay schedule, cash floor, thresholds, quiet hours, nag, assistant mode and autonomy). |
-| `household.today` | Today's date and month in the household timezone, days left in the month, the next payday, the assistant mode and autonomy settings, and the household name. |
+| `household.today` | Today's date and month in the household timezone, days left in the month, the next payday, this month's paydays (a biweekly schedule gives some months three), the assistant mode and autonomy settings, and the household name. |
 | `jobs.status` | Every job with its interval, last run (status, summary, error) and whether it is due. |
 | `planned.list` | Planned one-off items. |
 | `questions.list` | Questions and proposals, with answers. |
@@ -152,8 +153,8 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `budget.create_category` | plans_bills | Create a category (and its group if needed), optionally with a plan. |
 | `budget.delete_plan` | plans_bills | Remove a plan phase. |
 | `budget.set_category_note` | categorizing_notes | Set a category's standing note (read by the assistant; jobs honor [no-alerts], [no-large-charge], [no-pace]). |
-| `budget.set_plan` | plans_bills | Set a category's plan from a month onward (a plan phase). Omit starts_month for the current month. |
-| `budget.update_category` | plans_bills | Rename, move, flag or archive a category. |
+| `budget.set_plan` | plans_bills | Set a category's plan from a month onward (a plan phase). Omit starts_month for the current month. For a category with `plan_per_paycheck` the amount is per paycheck. |
+| `budget.update_category` | plans_bills | Rename, move, flag (everyday, per-paycheck plan) or archive a category. |
 | `debts.set_balance` | debts_goals | Record a debt's current balance. |
 | `debts.set_strategy` | debts_goals | Set the payoff strategy (avalanche, snowball, custom order) and the extra monthly payment. |
 | `debts.upsert` | debts_goals | Add a debt or update one (name, balance, APR in bps, minimum, planned payment, due day). |
@@ -651,6 +652,26 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 
 </details>
 
+<details><summary><code>balance.timeline</code></summary>
+
+```json
+{
+  "properties": {
+    "days": {
+      "description": "How far ahead, in days from today (default 60, at most 366).",
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
 <details><summary><code>bills.add</code></summary>
 
 ```json
@@ -1101,10 +1122,17 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
       ]
     },
     "plan_cents": {
-      "description": "Plan for this month onward, in cents.",
+      "description": "Plan for this month onward, in cents (per paycheck when `plan_per_paycheck`).",
       "format": "int64",
       "type": [
         "integer",
+        "null"
+      ]
+    },
+    "plan_per_paycheck": {
+      "description": "Plan per paycheck instead of per month: the month's plan is the amount\ntimes the paydays in it (a biweekly schedule gives some months three).",
+      "type": [
+        "boolean",
         "null"
       ]
     }
@@ -1203,7 +1231,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 {
   "properties": {
     "amount_cents": {
-      "description": "Money in integer cents; negative = out.",
+      "description": "Per month, or per paycheck for a category with `plan_per_paycheck`.",
       "format": "int64",
       "type": "integer"
     },
@@ -1275,6 +1303,13 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
     "name": {
       "type": [
         "string",
+        "null"
+      ]
+    },
+    "plan_per_paycheck": {
+      "description": "Plan per paycheck instead of per month (see `budget.create_category`).",
+      "type": [
+        "boolean",
         "null"
       ]
     },

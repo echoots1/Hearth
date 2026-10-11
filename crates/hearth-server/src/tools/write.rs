@@ -151,8 +151,11 @@ pub struct CategoryCreateArgs {
     /// `income` or `spend` (default).
     pub income: Option<bool>,
     pub is_everyday: Option<bool>,
+    /// Plan per paycheck instead of per month: the month's plan is the amount
+    /// times the paydays in it (a biweekly schedule gives some months three).
+    pub plan_per_paycheck: Option<bool>,
     pub note: Option<String>,
-    /// Plan for this month onward, in cents.
+    /// Plan for this month onward, in cents (per paycheck when `plan_per_paycheck`).
     pub plan_cents: Option<Cents>,
 }
 
@@ -162,6 +165,8 @@ pub struct CategoryUpdateArgs {
     pub name: Option<String>,
     pub group_id: Option<Uuid>,
     pub is_everyday: Option<bool>,
+    /// Plan per paycheck instead of per month (see `budget.create_category`).
+    pub plan_per_paycheck: Option<bool>,
     pub is_archived: Option<bool>,
     pub sort_order: Option<i32>,
 }
@@ -172,6 +177,7 @@ pub struct CategoryUpdateArgs {
 pub struct SetPlanArgs {
     pub category_id: Option<Uuid>,
     pub category_name: Option<String>,
+    /// Per month, or per paycheck for a category with `plan_per_paycheck`.
     pub amount_cents: Cents,
     /// `YYYY-MM` the new amount starts; defaults to the current month.
     pub starts_month: Option<String>,
@@ -843,6 +849,7 @@ pub fn tools() -> Vec<ToolDef> {
                                 }),
                                 note: a.note.clone(),
                                 is_everyday: a.is_everyday,
+                                plan_per_paycheck: a.plan_per_paycheck,
                                 sort_order: None,
                                 plan_cents: a.plan_cents,
                             },
@@ -861,7 +868,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "budget.update_category",
-            "Rename, move, flag or archive a category.",
+            "Rename, move, flag (everyday, per-paycheck plan) or archive a category.",
             CategoryUpdateArgs,
             writes = true,
             area = Some(Area::PlansBills),
@@ -870,9 +877,9 @@ pub fn tools() -> Vec<ToolDef> {
                 let args = args_of(&a);
                 gated(&tc, Area::PlansBills, "budget.update_category", &args, format!("Update category “{}”", before.name), (None, None), || async {
                 let after = services::budget::update_category(&tc.ctx, &tc.actor, a.category_id, services::budget::UpdateCategory {
-                    group_id: a.group_id, name: a.name.clone(), is_everyday: a.is_everyday, is_archived: a.is_archived, sort_order: a.sort_order, ..Default::default()
+                    group_id: a.group_id, name: a.name.clone(), is_everyday: a.is_everyday, plan_per_paycheck: a.plan_per_paycheck, is_archived: a.is_archived, sort_order: a.sort_order, ..Default::default()
                 }).await?;
-                let u = undo("budget.update_category", json!({ "category_id": before.id, "name": before.name, "group_id": before.group_id, "is_everyday": before.is_everyday, "is_archived": before.is_archived, "sort_order": before.sort_order }), "Restore category");
+                let u = undo("budget.update_category", json!({ "category_id": before.id, "name": before.name, "group_id": before.group_id, "is_everyday": before.is_everyday, "plan_per_paycheck": before.plan_per_paycheck, "is_archived": before.is_archived, "sort_order": before.sort_order }), "Restore category");
                 Ok((after.clone(), j(&before), j(&after), u))
             }).await?
             }
@@ -880,7 +887,7 @@ pub fn tools() -> Vec<ToolDef> {
         // ── plans & bills ──
         tool!(
             "budget.set_plan",
-            "Set a category's plan from a month onward (a plan phase). Omit starts_month for the current month.",
+            "Set a category's plan from a month onward (a plan phase). Omit starts_month for the current month. For a category with `plan_per_paycheck` the amount is per paycheck.",
             SetPlanArgs,
             writes = true,
             area = Some(Area::PlansBills),

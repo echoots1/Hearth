@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { AccountPicker, useAccountName } from "../components/AccountPicker";
 import { CategoryPicker, useCategoryName } from "../components/CategoryPicker";
-import { Card, CardHead, Empty, ErrorNote, Field, Icon, MoneyInput, PageHeader, SectionTitle, Sheet, SheetActions, Spinner, Stat, Toggle } from "../components/ui";
+import { Card, CardHead, Empty, ErrorNote, Field, Icon, MoneyInput, PageHeader, SectionTitle, Segmented, Sheet, SheetActions, Spinner, Stat, Toggle } from "../components/ui";
 import { tool } from "../lib/api";
-import { useBills, usePlanned, useSinking, useToday } from "../lib/data";
+import { useBills, usePlanned, useSinking, useTimeline, useToday } from "../lib/data";
 import { ago, dueWord, longDate, monthShort, ordinal, shortDate, todayIso } from "../lib/dates";
-import { dollars, money } from "../lib/money";
+import { dollars, money, signed } from "../lib/money";
 import { useMutation } from "../lib/query";
-import type { Bill, PlannedItem, Today } from "../lib/types";
+import type { Bill, PlannedItem, TimelineEntry, Today } from "../lib/types";
 
 export function Plan() {
   const today = useToday();
@@ -21,8 +21,6 @@ export function Plan() {
   const t = today.data;
   const all = bills.data ?? [];
   const active = all.filter((b) => b.status === "active");
-  const upcomingBills = active.filter((b) => b.next_due <= t.next_payday).sort((a, b) => a.next_due.localeCompare(b.next_due));
-  const upcomingPlanned = (planned.data ?? []).filter((p) => p.status === "planned" && p.date <= t.next_payday);
   const monthly = all.filter((b) => b.cadence_months === 1);
   const yearly = all.filter((b) => b.cadence_months === 12);
   const everyN = all.filter((b) => b.cadence_months !== 1 && b.cadence_months !== 12);
@@ -31,12 +29,11 @@ export function Plan() {
     <>
       <PageHeader title="Plan" subtitle={`next paycheck ${shortDate(t.next_payday)} · ${dueWord(t.next_payday, t.today)}`} />
 
-      <SectionTitle title="Up next" right="before the next paycheck" />
-      <Card className="divider overflow-hidden">
-        {upcomingBills.length === 0 && upcomingPlanned.length === 0 && <Empty>Nothing due before {shortDate(t.next_payday)}.</Empty>}
-        {upcomingBills.map((b) => <BillRow key={b.id} b={b} today={t} onTap={() => setEditBill(b)} upcoming />)}
-        {upcomingPlanned.map((p) => <PlannedRow key={p.id} p={p} onTap={() => setEditPlanned(p)} />)}
-      </Card>
+      <TimelineCard
+        today={t}
+        onBill={(id) => { const b = all.find((x) => x.id === id); if (b) setEditBill(b); }}
+        onPlanned={(id) => { const p = (planned.data ?? []).find((x) => x.id === id); if (p) setEditPlanned(p); }}
+      />
 
       <SectionTitle title="Recurring bills" right={`${dollars(active.reduce((s, b) => s + (b.monthly_equivalent_cents ?? Math.round(b.amount_cents / b.cadence_months)), 0))}/mo`} />
       <BillGroup title="Monthly" bills={monthly} today={t} onTap={setEditBill} />
@@ -59,6 +56,92 @@ export function Plan() {
   );
 }
 
+const HORIZONS = [
+  { key: "28", label: "4 weeks" }, { key: "56", label: "8 weeks" }, { key: "91", label: "13 weeks" },
+] as const;
+type Horizon = (typeof HORIZONS)[number]["key"];
+
+/** Expected cash from today: paychecks, bills, one-offs and the everyday drain, with the balance after each. */
+function TimelineCard({ today, onBill, onPlanned }: { today: Today; onBill: (id: string) => void; onPlanned: (id: string) => void }) {
+  const [horizon, setHorizon] = useState<Horizon>("56");
+  const q = useTimeline(Number(horizon));
+  const v = q.data;
+  const t = v?.timeline;
+  const floor = v?.cash_floor_cents ?? 0;
+  return (
+    <>
+      <SectionTitle title="Cash ahead" right={<Segmented small value={horizon} onChange={setHorizon} items={HORIZONS.map((h) => ({ key: h.key, label: h.label }))} />} />
+      {q.error && <ErrorNote error={q.error.message} />}
+      {!t && !q.error && <Spinner />}
+      {v && t && (
+        <Card className="divider overflow-hidden">
+          <div className="flex flex-col gap-3 p-4">
+            <div className="grid grid-cols-3 gap-2">
+              <Stat label="Now" value={money(t.start_cents)} />
+              <Stat label={`Low · ${shortDate(t.low_date)}`} value={money(t.low_cents)} tone={t.low_cents < floor ? "attention" : undefined} />
+              <Stat label={`On ${shortDate(t.until)}`} value={money(t.end_cents)} tone={t.end_cents < floor ? "attention" : t.end_cents > t.start_cents ? "income" : undefined} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-[14px] px-3 py-1.5 text-[13px] font-bold ${v.headroom_cents >= 0 ? "bg-floor text-ink" : "bg-attention text-white"}`}>
+                {v.headroom_cents >= 0 ? `${dollars(v.headroom_cents)} above the floor at the low` : `${dollars(-v.headroom_cents)} below the floor at the low`}
+              </span>
+              <span className="text-muted text-[12px] font-semibold">
+                {t.paydays.length} paycheck{t.paydays.length === 1 ? "" : "s"} · +{dollars(t.income_cents)} · bills −{dollars(t.bills_cents)} · everyday −{dollars(t.everyday_cents)}{t.planned_cents > 0 && ` · one-offs −${dollars(t.planned_cents)}`}
+              </span>
+            </div>
+            {t.overdue_count > 0 && (
+              <p className="text-attention text-[12px] font-semibold">
+                {t.overdue_count} item{t.overdue_count === 1 ? " is" : "s are"} past due and not posted yet. {t.overdue_count === 1 ? "It stays" : "They stay"} on the timeline, counted today, until the charge comes out.
+              </p>
+            )}
+            {t.unscheduled_income_monthly_cents > 0 && (
+              <p className="text-muted text-[12px] font-semibold">
+                Not counting {dollars(t.unscheduled_income_monthly_cents)}/mo of income with no payday. Set those categories to plan per paycheck to put them on the timeline.
+              </p>
+            )}
+            {t.paydays.length === 0 && t.income_cents === 0 && t.unscheduled_income_monthly_cents === 0 && (
+              <p className="text-muted text-[12px] font-semibold">No income on the timeline: set your paycheck category to plan per paycheck (Budget → category → edit) and check the pay schedule in Settings.</p>
+            )}
+          </div>
+          {t.entries.length === 0 && <Empty>Nothing expected before {shortDate(t.until)}.</Empty>}
+          {t.entries.map((e, i) => <TimelineRow key={i} e={e} today={today} floor={floor} onTap={e.bill_id ? () => onBill(e.bill_id!) : e.planned_item_id ? () => onPlanned(e.planned_item_id!) : undefined} />)}
+        </Card>
+      )}
+    </>
+  );
+}
+
+function TimelineRow({ e, today, floor, onTap }: { e: TimelineEntry; today: Today; floor: number; onTap?: () => void }) {
+  const catName = useCategoryName();
+  const income = e.amount_cents > 0;
+  const everyday = e.kind === "everyday";
+  const when = everyday
+    ? `${e.days} day${e.days === 1 ? "" : "s"} through ${shortDate(e.date)}`
+    : e.overdue && e.due_date
+      ? `due ${shortDate(e.due_date)} · ${dueWord(e.due_date, today.today)} · not posted yet`
+      : `${shortDate(e.date)} · ${dueWord(e.date, today.today)}`;
+  const what = e.kind === "paycheck" ? "paycheck" : e.kind === "bill" ? "bill" : e.kind === "planned" ? "one-off" : null;
+  const body = (
+    <>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className={`truncate text-[15px] font-bold ${everyday ? "text-muted" : ""}`}>{e.label}</span>
+        <span className={`truncate text-[12px] font-semibold ${e.overdue ? "text-attention" : "text-muted"}`}>
+          {when}{what && ` · ${what}`}{e.category_id && e.kind !== "paycheck" && ` · ${catName(e.category_id)}`}
+        </span>
+      </div>
+      <div className="flex shrink-0 flex-col items-end">
+        <span className={`text-[15px] font-extrabold ${income ? "text-income" : everyday ? "text-muted" : ""}`}>{signed(e.amount_cents)}</span>
+        <span className={`text-[11px] font-semibold ${e.balance_after_cents < floor ? "text-attention" : "text-muted"}`}>{money(e.balance_after_cents)} after</span>
+      </div>
+    </>
+  );
+  return onTap ? (
+    <button type="button" onClick={onTap} className="row w-full text-left">{body}</button>
+  ) : (
+    <div className="row">{body}</div>
+  );
+}
+
 function BillGroup({ title, bills, today, onTap }: { title: string; bills: Bill[]; today: Today; onTap: (b: Bill) => void }) {
   if (bills.length === 0) return null;
   const sorted = [...bills].sort((a, b) => (a.status === b.status ? a.next_due.localeCompare(b.next_due) : a.status === "active" ? -1 : 1));
@@ -70,16 +153,12 @@ function BillGroup({ title, bills, today, onTap }: { title: string; bills: Bill[
   );
 }
 
-function BillRow({ b, today, onTap, upcoming }: { b: Bill; today: Today; onTap: () => void; upcoming?: boolean }) {
+function BillRow({ b, today, onTap }: { b: Bill; today: Today; onTap: () => void }) {
   const catName = useCategoryName();
   const accountName = useAccountName();
-  const inLowPoint = b.status === "active" && b.next_due <= today.next_payday && b.next_due >= today.today;
   const overdue = b.status === "active" && b.next_due < today.today;
-  const when = upcoming
-    ? `due ${shortDate(b.next_due)} · ${dueWord(b.next_due, today.today)}`
-    : b.cadence_months === 1
-      ? `due ${ordinal(Number(b.next_due.slice(8)))}`
-      : `next ${shortDate(b.next_due)}`;
+  const inLowPoint = b.status === "active" && b.next_due < today.next_payday;
+  const when = b.cadence_months === 1 ? `due ${ordinal(Number(b.next_due.slice(8)))}` : `next ${shortDate(b.next_due)}`;
   return (
     <button type="button" onClick={onTap} className="row w-full text-left">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -87,8 +166,8 @@ function BillRow({ b, today, onTap, upcoming }: { b: Bill; today: Today; onTap: 
           {b.name}
           {b.status !== "active" && <span className="bg-line rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase">{b.status}</span>}
         </span>
-        <span className={`truncate text-[12px] font-semibold ${overdue || (inLowPoint && !upcoming) ? "text-attention" : "text-muted"}`}>
-          {when}{overdue && " · overdue"}{inLowPoint && !upcoming && " · in low point"} · {catName(b.category_id)}{b.account_id && ` · ${accountName(b.account_id)}`}
+        <span className={`truncate text-[12px] font-semibold ${overdue || inLowPoint ? "text-attention" : "text-muted"}`}>
+          {when}{overdue && " · overdue, not posted"}{inLowPoint && " · in low point"} · {catName(b.category_id)}{b.account_id && ` · ${accountName(b.account_id)}`}
         </span>
       </div>
       <div className="flex shrink-0 flex-col items-end">
