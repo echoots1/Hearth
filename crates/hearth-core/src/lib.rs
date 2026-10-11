@@ -15,6 +15,7 @@ pub mod bills;
 pub mod budget;
 pub mod calendar;
 pub mod debts;
+pub mod goals;
 pub mod money;
 pub mod planned;
 pub mod rules;

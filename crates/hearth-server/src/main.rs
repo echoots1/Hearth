@@ -4,9 +4,15 @@
 
 mod api;
 mod assets;
+mod auth;
 #[allow(dead_code)] // fields are consumed as integrations land
 mod config;
 mod db;
+mod integrations;
+#[allow(dead_code)] // consumed by the API, MCP and jobs steps
+mod services;
+#[allow(dead_code)] // consumed by the API and MCP steps
+mod tools;
 
 use std::net::SocketAddr;
 
@@ -70,7 +76,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
 
-    let state = api::AppState::new(config.clone(), pool);
+    let state = api::AppState::new(config.clone(), pool).await?;
     let app = api::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));

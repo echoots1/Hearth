@@ -75,6 +75,7 @@ impl Default for BillMatch {
 }
 
 /// Who initiates assistant work.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssistantMode {
@@ -85,6 +86,7 @@ pub enum AssistantMode {
 }
 
 /// How much the assistant may do on its own in an area.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Autonomy {
@@ -95,6 +97,7 @@ pub enum Autonomy {
 }
 
 /// The write areas the autonomy switch distinguishes.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutonomyArea {
@@ -273,6 +276,7 @@ impl Default for ReviewBacklog {
     }
 }
 
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DebtStrategyKind {
