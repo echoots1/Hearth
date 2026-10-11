@@ -28,9 +28,13 @@ pub async fn account_estimates(ctx: &Ctx) -> Result<Vec<AccountEstimate>> {
         .min()
         .map(|t| hearth_core::calendar::local_date(ctx.tz, t))
         .unwrap_or(ctx.today());
+    // A shadow of a row on the same account (the bank's PwP line for a
+    // Privacy.com charge) is a duplicate; a shadow of a row on another account
+    // is the bank's view of cash and counts.
     let rows: Vec<(uuid::Uuid, chrono::NaiveDate, Cents, bool, bool)> = sqlx::query_as(
-        "select account_id, date, amount_cents, pending, shadow_of_transaction_id is not null
-         from transactions where household_id = $1 and deleted_at is null and (date > $2 or pending)",
+        "select t.account_id, t.date, t.amount_cents, t.pending,
+                exists (select 1 from transactions p where p.id = t.shadow_of_transaction_id and p.account_id = t.account_id)
+         from transactions t where t.household_id = $1 and t.deleted_at is null and (t.date > $2 or t.pending)",
     )
     .bind(ctx.household_id)
     .bind(oldest)
@@ -39,13 +43,13 @@ pub async fn account_estimates(ctx: &Ctx) -> Result<Vec<AccountEstimate>> {
     let txns: Vec<TxnForEstimate> = rows
         .into_iter()
         .map(
-            |(account_id, date, amount_cents, pending, shadow)| TxnForEstimate {
+            |(account_id, date, amount_cents, pending, duplicate)| TxnForEstimate {
                 account_id,
                 date,
                 amount_cents,
                 pending,
                 deleted: false,
-                shadow,
+                duplicate,
             },
         )
         .collect();

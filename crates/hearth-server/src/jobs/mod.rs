@@ -46,7 +46,7 @@ pub fn registry(state: &AppState) -> Vec<Job> {
     let mut v = vec![
         Job {
             name: "process",
-            description: "apply rules, match bills and planned items, shadow-link card duplicates, queue the rest for review",
+            description: "pair the bank's PwP lines with Privacy.com charges, apply rules, match bills and planned items, queue the rest for review",
             every: Duration::from_secs(5 * 60),
             handler: |s| Box::pin(process::run(s)),
             gate: None,

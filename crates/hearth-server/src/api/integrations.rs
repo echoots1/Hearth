@@ -59,12 +59,6 @@ pub async fn status(State(state): State<AppState>, _u: AuthUser) -> Result<Json<
             "last_synced_at": it.last_synced_at, "consecutive_failures": it.consecutive_failures, "created_at": it.created_at, "accounts": accounts,
         }));
     }
-    let privacy_cards: i64 = sqlx::query_scalar(
-        "select count(*) from accounts where household_id = $1 and source = 'privacy'",
-    )
-    .bind(state.household_id)
-    .fetch_one(&state.pool)
-    .await?;
     let last = |job: &str| {
         let pool = state.pool.clone();
         let job = job.to_string();
@@ -79,6 +73,20 @@ pub async fn status(State(state): State<AppState>, _u: AuthUser) -> Result<Json<
     let presets = csv_import::presets(&ctx).await?;
     let plaid = integ::plaid(&ctx, &state.config).await?;
     let privacy = integ::privacy(&ctx, &state.config).await?;
+    // Where card charges land, or why they can't yet.
+    let (funding, funding_error) = match &privacy {
+        Some((cfg, _)) => {
+            match services::privacy::funding_account(&ctx, cfg.funding_account_id).await {
+                Ok(a) => (
+                    Some(json!({ "id": a.id, "name": a.name, "mask": a.mask })),
+                    None,
+                ),
+                Err(services::Error::Invalid(m)) => (None, Some(m)),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        None => (None, None),
+    };
     let ntfy = integ::ntfy(&ctx, &state.config).await?;
     let smtp = integ::smtp(&ctx, &state.config).await?;
     let encryption_configured = state.crypto.is_some();
@@ -92,7 +100,9 @@ pub async fn status(State(state): State<AppState>, _u: AuthUser) -> Result<Json<
         },
         "privacy": {
             "configured": privacy.is_some(), "source": source_json(privacy.as_ref().map(|(_, s)| *s)),
-            "env": privacy.as_ref().map(|(p, _)| p.env.clone()), "cards": privacy_cards, "last_sync": last("sync:privacy").await?,
+            "env": privacy.as_ref().map(|(p, _)| p.env.clone()),
+            "funding_account_id": privacy.as_ref().and_then(|(p, _)| p.funding_account_id),
+            "funding_account": funding, "funding_error": funding_error, "last_sync": last("sync:privacy").await?,
         },
         "ntfy": {
             "configured": ntfy.is_some(), "source": source_json(ntfy.as_ref().map(|(_, s)| *s)),
@@ -174,11 +184,23 @@ pub async fn configure(
         }
         "privacy" => {
             let prev: Option<PrivacyConfig> = integ::stored(&ctx, integ::PRIVACY).await?;
+            let funding_account_id = match s(&b, "funding_account_id") {
+                None => None,
+                Some(id) => {
+                    let id: uuid::Uuid = id
+                        .parse()
+                        .map_err(|_| ApiError::bad_request("Funding account is not valid"))?;
+                    // Must be one of the household's bank accounts.
+                    services::privacy::funding_account(&ctx, Some(id)).await?;
+                    Some(id)
+                }
+            };
             let cfg = PrivacyConfig {
                 api_key: s(&b, "api_key")
                     .or_else(|| prev.as_ref().map(|p| p.api_key.clone()))
                     .ok_or_else(|| ApiError::bad_request("API key is required"))?,
                 env: s(&b, "env").unwrap_or_else(|| "sandbox".into()),
+                funding_account_id,
             };
             Privacy::new(&cfg).map_err(|e| ApiError::bad_request(e.to_string()))?;
             integ::save(&ctx, &actor, integ::PRIVACY, &cfg).await?;
