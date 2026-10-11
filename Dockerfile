@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ── 1. Web UI ──────────────────────────────────────────────────────────────
-FROM node:22-alpine AS web
+FROM node:25-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
