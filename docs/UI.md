@@ -64,7 +64,11 @@ Tabs: **Inbox** · All activity · Done.
   amount; actions Acknowledge · Resolve… · Snooze. Critical alerts get an
   orange outline.
 - **Questions from the AI** on a warm tint with the AI's option buttons and
-  "Type an answer…".
+  "Type an answer…". A question carrying a **proposal** shows the exact
+  change ("Groceries plan $800 → $900") with Approve · Edit · Decline.
+- **Claude did …** entries when the assistant is in Driver mode: what
+  changed, before → after, and Undo where available. These appear under
+  "All activity", not in the Inbox, unless an Undo is still available.
 - **To categorize**: uncategorized transactions with suggested-category
   chips, "Other…", "+ make a rule", and a "Let Claude take a pass" button
   for the remainder.
@@ -104,3 +108,8 @@ Getting out of debt, then building savings; same card language.
 ### More
 
 Accounts, rules, settings, users, API keys, integrations, jobs.
+
+**Settings → Assistant** has the Backseat / Driver switch: one global
+position and per-area overrides (categorizing & notes · plans & bills ·
+debt strategy & goals), each with a one-line description of what the
+assistant may do in that position.

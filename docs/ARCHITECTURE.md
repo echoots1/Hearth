@@ -48,7 +48,7 @@ Eleven nouns. Everything on screen and every MCP tool is made of these.
 | **Sinking fund** | The money set aside for non-monthly bills: a funded balance with an as-of, and the derived should-have-saved from the yearly/quarterly bills. | Plan tab → Sinking fund |
 | **Debt** | Balance, APR, minimum, due day, planned payment; payoff projection, interest per day, what-if deltas. | Goals tab → Debts |
 | **Goal** | A savings target: name, target amount, optional target date, the account it accrues in, the monthly contribution (a category plan). Projection: date reached at current pace, or pace needed for the date. Debt-free is an implicit goal. | Goals tab → Savings |
-| **Alert / Question** | Something that needs a human: raised by a job (alert) or by the AI (question). Lifecycle open → notified → ack → done. | Activity inbox, attention pills |
+| **Alert / Question** | Something that needs a human: raised by a job (alert) or by the AI (question). A question may carry a **proposal**: a structured change ("set Groceries plan to $900", "switch to avalanche") that applying approves in one tap. Lifecycle open → notified → ack → done. | Activity inbox, attention pills |
 
 Derived, never stored: running estimate, projected low point, category
 rollups, pace, suggested category plans (sum of a category's bills), the
@@ -179,12 +179,28 @@ returns what it created plus any plan it raised, so the assistant can
 confirm in one line. When a category is ambiguous the assistant asks (a
 question), it does not guess.
 
+**Assistant autonomy is a household setting with two positions.**
+
+- **Backseat** (suggest): the assistant's write tools don't change data
+  directly; each call becomes a *proposal* in the Activity inbox with the
+  exact change spelled out and an Approve button. Reads are unrestricted.
+- **Driver** (act): write tools apply immediately. Every change shows in
+  Activity as "Claude did …" with the before/after and, where it makes
+  sense, an Undo. Nothing is hidden; the audit log is the record.
+
+The switch is global with per-area overrides, so you can let the assistant
+drive categorizing and notes while keeping plan amounts, bills, and debt
+strategy on backseat (the proposed default). Changing the setting is itself
+a UI-only action; the assistant cannot promote itself. Either way, "can we
+buy X?" answers are reads and always work.
+
 Forecasting tools return the numbers for every option, not a pick:
 `debts.compare` gives payoff month and total interest for avalanche,
 snowball, and custom; `debts.what_if` takes an extra monthly amount or a
 one-time charge and returns the delta in months and dollars; `goals.project`
 returns the reach date at current pace and the pace for a target date. The
-assistant recommends; the app never auto-applies a strategy change.
+assistant recommends; in Driver mode it may apply the strategy change, and
+the change is visible and undoable in Activity.
 
 "Can we buy X?" = `balance.get` (cash check) → `budget.get_month` (category
 check) → `planned.list` / `debts.delay_cost` (plan check) → YES / NOT NOW /
@@ -220,8 +236,9 @@ institutions or people; seed data is obviously fake.
 | 3 | Everyday pace for the low point | `max(actual pace, plan pace)`, pessimistic by design. |
 | 4 | Unspent plan at month end | Resets (no rollover) in v1. |
 | 5 | Where the AI's "can we buy" answer is logged | As a question with the answer recorded, so it's auditable. |
-| 6 | Is a category's plan set by hand, or derived from its bills? | Both: the plan is a number you (or the AI) set; the app shows "bills in this category total $X" and the AI raises the plan when a new bill would exceed it. Never silently lowers it. |
-| 7 | One bill → one category, or can a bill split? | One category per bill in v1. |
+| 6 | Is a category's plan set by hand, or derived from its bills? | **Decided:** the plan is a number you (or the AI) set and can edit at any time; the app shows "bills in this category total $X" and the AI may raise it when a new bill exceeds it. Never silently lowers it. |
+| 7 | One bill → one category, or can a bill split? | **Decided:** one category by default; a bill can be split across categories only when a person asks for it (by chat or in the form), never on the assistant's own initiative. |
 | 8 | Do yearly bills live in a category too? | Yes: they post to their category in the month they hit; the set-aside shows as the Sinking fund row. |
-| 9 | Who suggests? | The app computes every option's numbers; only the assistant phrases a recommendation, and it records the decision as a visible plan change. No auto-applied strategy switches. |
+| 9 | Who suggests, who acts? | **Decided:** the app computes every option's numbers; the assistant recommends. Whether it may also *apply* a change is the Backseat / Driver setting in §8, per area, default Driver for categorizing and notes, Backseat for plans, bills, and strategy. |
+| 11 | Undo | Proposed: changes made by the assistant in Driver mode get an Undo in Activity for categorize, note, plan amount, and strategy; adding a bill is reversed by canceling it. Undo is a new audited write, not a rollback. |
 | 10 | Wealth building scope | Phase 2: net worth from balance snapshots, investment accounts with manually reported balances, contribution tracking. No brokerage sync or market data in scope yet. |
