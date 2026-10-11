@@ -41,8 +41,8 @@ integrations, jobs).
      payday, a pill with distance above/below the cash floor, and four
      tiles explaining the deductions: bills due (a bill past due with no
      matching charge is still counted), everyday pace, other plans (every
-     other spend category's plan above its bills and what is spent, spread
-     over the rest of the month), one-offs; a link to the timeline on the
+     other spend category's plan above what is spent and what its bills
+     still take this month, spread over the rest of the month), one-offs; a link to the timeline on the
      Plan tab.
 4. **Attention row** of pills: N alerts (orange when any critical), N
    questions from the AI, N to review. Each opens the Activity inbox

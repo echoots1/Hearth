@@ -6,7 +6,8 @@ use hearth_core::balance::{
 };
 use hearth_core::money::Cents;
 use hearth_core::timeline::{
-    BillForTimeline, CategoryForTimeline, PlannedForTimeline, Timeline, cash_timeline,
+    BillForTimeline, BillSplitShare, CategoryForTimeline, PlannedForTimeline, Timeline,
+    bills_cover_by_category, cash_timeline,
 };
 use serde::Serialize;
 
@@ -76,11 +77,51 @@ pub async fn account_estimates(ctx: &Ctx) -> Result<Vec<AccountEstimate>> {
         .collect())
 }
 
+/// Every active bill with its splits, as the timeline projects them.
+async fn active_bills(ctx: &Ctx) -> Result<Vec<BillForTimeline>> {
+    let bills = super::bills::list(
+        ctx,
+        &super::bills::ListQuery {
+            status: Some(crate::db::models::BillStatus::Active),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let mut splits: std::collections::HashMap<uuid::Uuid, Vec<BillSplitShare>> =
+        std::collections::HashMap::new();
+    for s in super::bills::active_splits(ctx).await? {
+        splits.entry(s.bill_id).or_default().push(BillSplitShare {
+            category_id: s.category_id,
+            amount_cents: s.amount_cents,
+        });
+    }
+    Ok(bills
+        .into_iter()
+        .map(|b| BillForTimeline {
+            splits: splits.remove(&b.id).unwrap_or_default(),
+            id: b.id,
+            name: b.name,
+            next_due: b.next_due,
+            cadence_months: b.cadence_months.max(1) as u32,
+            per_paycheck: b.per_paycheck,
+            amount_cents: b.amount_cents,
+            category_id: b.category_id,
+        })
+        .collect())
+}
+
 pub async fn low_point(ctx: &Ctx, estimate: Cents) -> Result<LowPoint> {
     let settings = super::settings::load(ctx).await?;
     let today = ctx.today();
     let payday = settings.pay_schedule.next_payday(today);
-    let view = super::budget::month_view(ctx, ctx.month()).await?;
+    let month = ctx.month();
+    let view = super::budget::month_view(ctx, month).await?;
+    // Every active bill: the ones due before payday are projected on their
+    // dates, including ones past due with no matching charge yet (`next_due`
+    // only moves when the charge posts); the rest of the month's occurrences
+    // decide what each category's plan still has to cover.
+    let active = active_bills(ctx).await?;
+    let cover = bills_cover_by_category(&active, month, today, &settings.pay_schedule);
     let cats: Vec<CategoryForLowPoint> = view
         .groups
         .iter()
@@ -92,7 +133,7 @@ pub async fn low_point(ctx: &Ctx, estimate: Cents) -> Result<LowPoint> {
             plan_cents: c.plan_cents,
             spent_cents: c.activity_cents,
             is_everyday: c.is_everyday,
-            bills_total_cents: c.bills_total_cents,
+            bills_cover_cents: cover.get(&c.id).copied().unwrap_or(Cents::ZERO),
         })
         .collect();
     let planned: Vec<PlannedForLowPoint> = super::planned::outstanding(ctx)
@@ -106,26 +147,17 @@ pub async fn low_point(ctx: &Ctx, estimate: Cents) -> Result<LowPoint> {
             outstanding: true,
         })
         .collect();
-    // Every active bill due before payday, including ones past due with no
-    // matching charge yet: `next_due` only moves when the charge posts.
-    let bills: Vec<BillForLowPoint> = super::bills::list(
-        ctx,
-        &super::bills::ListQuery {
-            status: Some(crate::db::models::BillStatus::Active),
-            due_before: Some(payday),
-            ..Default::default()
-        },
-    )
-    .await?
-    .into_iter()
-    .map(|b| BillForLowPoint {
-        id: b.id,
-        name: b.name,
-        due: b.next_due,
-        amount_cents: b.amount_cents,
-        posted: false,
-    })
-    .collect();
+    let bills: Vec<BillForLowPoint> = active
+        .into_iter()
+        .filter(|b| b.next_due < payday)
+        .map(|b| BillForLowPoint {
+            id: b.id,
+            name: b.name,
+            due: b.next_due,
+            amount_cents: b.amount_cents,
+            posted: false,
+        })
+        .collect();
     Ok(balance::projected_low_point(
         estimate, today, payday, &cats, &bills, &planned,
     ))
@@ -179,25 +211,7 @@ pub async fn timeline(ctx: &Ctx, days: Option<i64>) -> Result<TimelineView> {
             }
         })
         .collect();
-    let bills: Vec<BillForTimeline> = super::bills::list(
-        ctx,
-        &super::bills::ListQuery {
-            status: Some(crate::db::models::BillStatus::Active),
-            ..Default::default()
-        },
-    )
-    .await?
-    .into_iter()
-    .map(|b| BillForTimeline {
-        id: b.id,
-        name: b.name,
-        next_due: b.next_due,
-        cadence_months: b.cadence_months.max(1) as u32,
-        per_paycheck: b.per_paycheck,
-        amount_cents: b.amount_cents,
-        category_id: b.category_id,
-    })
-    .collect();
+    let bills = active_bills(ctx).await?;
     let planned: Vec<PlannedForTimeline> = super::planned::outstanding(ctx)
         .await?
         .into_iter()

@@ -45,6 +45,15 @@ pub struct BillForTimeline {
     pub per_paycheck: bool,
     pub amount_cents: Cents,
     pub category_id: Option<Uuid>,
+    /// Parts of the amount budgeted in other categories than the bill's own.
+    pub splits: Vec<BillSplitShare>,
+}
+
+/// A part of a bill's amount budgeted in another category.
+#[derive(Clone, Debug)]
+pub struct BillSplitShare {
+    pub category_id: Uuid,
+    pub amount_cents: Cents,
 }
 
 /// An outstanding planned one-off (planned, not yet matched).
@@ -65,8 +74,8 @@ pub enum TimelineKind {
     Planned,
     /// Everyday-category spending at its pace over a run of days.
     Everyday,
-    /// The rest of another spend category's plan (above its bills and what
-    /// is spent), spread over the rest of the month.
+    /// The rest of another spend category's plan (above what is spent and
+    /// what its bills still take), spread over the rest of the month.
     Plan,
 }
 
@@ -140,40 +149,108 @@ fn kind_order(k: TimelineKind) -> u8 {
     }
 }
 
-/// Monthly-equivalent total of the active bills in a category for a month
-/// with `paychecks_in_month` paydays.
-fn bills_total_for(category: Uuid, bills: &[BillForTimeline], paychecks_in_month: u32) -> Cents {
-    bills
-        .iter()
-        .filter(|b| b.category_id == Some(category))
-        .map(|b| {
-            if b.per_paycheck {
-                Cents(b.amount_cents.0 * paychecks_in_month as i64)
-            } else {
-                b.amount_cents.div_ceil(b.cadence_months.max(1) as i64)
-            }
-        })
-        .sum()
+/// How many occurrences of a bill land in `month` and have not posted.
+/// Occurrences run from `next_due`, which only moves when a charge posts, so
+/// every one counted is still to come. One past due lands today (the first
+/// only, as the timeline shows it); a per-paycheck bill lands on each
+/// remaining payday.
+fn unposted_occurrences_in(
+    b: &BillForTimeline,
+    month: Month,
+    today: NaiveDate,
+    schedule: &PaySchedule,
+) -> i64 {
+    let last = month.last_day();
+    let mut due = b.next_due;
+    let mut first = true;
+    let mut n = 0;
+    let mut steps = 0;
+    while due <= last && steps < 400 {
+        let lands = if due >= today {
+            Some(due)
+        } else if first {
+            Some(today)
+        } else {
+            None
+        };
+        if lands.is_some_and(|d| Month::of(d) == month) {
+            n += 1;
+        }
+        first = false;
+        due = if b.per_paycheck {
+            schedule.next_payday(due)
+        } else {
+            advance(due, b.cadence_months)
+        };
+        steps += 1;
+    }
+    n
+}
+
+/// What a bill's share of `amount` takes out of a category's plan in `month`:
+/// its occurrences landing in the month that have not posted. A posted one is
+/// already in the category's activity and is not counted again, which is what
+/// keeps a bill paid early in the month from being subtracted twice. A bill
+/// due less often than monthly takes at least its monthly equivalent: the plan
+/// sets that much aside in the months between, and that money stays put.
+fn bill_cover(
+    b: &BillForTimeline,
+    amount: Cents,
+    month: Month,
+    today: NaiveDate,
+    schedule: &PaySchedule,
+) -> Cents {
+    let due = Cents(amount.0 * unposted_occurrences_in(b, month, today, schedule));
+    if b.per_paycheck || b.cadence_months <= 1 {
+        due
+    } else {
+        due.max(amount.div_ceil(b.cadence_months as i64))
+    }
+}
+
+/// What the active bills take out of each category's plan in `month` (see
+/// [`bill_cover`]); a split bill is charged to each category by its share.
+pub fn bills_cover_by_category(
+    bills: &[BillForTimeline],
+    month: Month,
+    today: NaiveDate,
+    schedule: &PaySchedule,
+) -> HashMap<Uuid, Cents> {
+    let mut out: HashMap<Uuid, Cents> = HashMap::new();
+    for b in bills.iter().filter(|b| b.amount_cents.0 > 0) {
+        let split_total: Cents = b.splits.iter().map(|s| s.amount_cents).sum();
+        let own = (b.amount_cents - split_total).floor_zero();
+        let shares = b
+            .category_id
+            .map(|c| (c, own))
+            .into_iter()
+            .chain(b.splits.iter().map(|s| (s.category_id, s.amount_cents)));
+        for (category, amount) in shares.filter(|(_, a)| a.0 > 0) {
+            *out.entry(category).or_insert(Cents::ZERO) +=
+                bill_cover(b, amount, month, today, schedule);
+        }
+    }
+    out
 }
 
 /// What a non-everyday spend category drains on a date: this month, the
-/// plan above its bills and what is spent, spread evenly over the days from
-/// today to month end; a later month, that month's plan above its bills over
-/// all its days. Day amounts are differences of the running share, so a run
-/// of days sums to exactly [`plan_share`] of the whole.
+/// plan above what is spent and what its bills still take (see
+/// [`bill_cover`]), spread evenly over the days from today to month end; a
+/// later month, that month's plan above its bills over all its days. Day
+/// amounts are differences of the running share, so a run of days sums to
+/// exactly [`plan_share`] of the whole.
 fn plan_drain_on(
     c: &CategoryForTimeline,
     date: NaiveDate,
     today: NaiveDate,
     household_paychecks: u32,
-    bills: &[BillForTimeline],
+    bills_cover: Cents,
 ) -> Cents {
     let month = Month::of(date);
     let n = paychecks_in_month(c.pay_schedule.as_ref(), month, household_paychecks);
     let plan = monthly_plan(&c.phases, month, c.plan_per_paycheck, n);
-    let bills_total = bills_total_for(c.id, bills, household_paychecks);
     let (remaining, day, days_left) = if month == Month::of(today) {
-        let remaining = (plan - bills_total - c.activity_cents).floor_zero();
+        let remaining = (plan - c.activity_cents - bills_cover).floor_zero();
         let day = (date.day() - today.day() + 1) as i64;
         (
             remaining,
@@ -182,7 +259,7 @@ fn plan_drain_on(
         )
     } else {
         (
-            (plan - bills_total).floor_zero(),
+            (plan - bills_cover).floor_zero(),
             date.day() as i64,
             month.days_in_month() as i64,
         )
@@ -239,6 +316,8 @@ pub fn cash_timeline(
 ) -> Timeline {
     let until = until.max(today);
     let mut paychecks: HashMap<Month, u32> = HashMap::new();
+    // Per month, what the bills take out of each category's plan.
+    let mut covers: HashMap<Month, HashMap<Uuid, Cents>> = HashMap::new();
     let mut events: Vec<Event> = Vec::new();
 
     let mut paydays = schedule.paydays_between(today, until);
@@ -379,11 +458,15 @@ pub fn cash_timeline(
             let household = *paychecks
                 .entry(month)
                 .or_insert_with(|| schedule.paydays_in_month(month).len() as u32);
+            let cover = covers
+                .entry(month)
+                .or_insert_with(|| bills_cover_by_category(bills, month, today, schedule));
             for c in &everyday {
                 amt += everyday_pace(c, d, today, &mut paychecks, schedule);
             }
             for (i, c) in planned_cats.iter().enumerate() {
-                per_cat[i] += plan_drain_on(c, d, today, household, bills);
+                let bills_cover = cover.get(&c.id).copied().unwrap_or(Cents::ZERO);
+                per_cat[i] += plan_drain_on(c, d, today, household, bills_cover);
             }
             d = d.succ_opt().expect("date in range");
         }
@@ -573,6 +656,7 @@ mod tests {
             per_paycheck: false,
             amount_cents: Cents::dollars(dollars),
             category_id: None,
+            splits: vec![],
         }
     }
 
@@ -732,7 +816,7 @@ mod tests {
                 plan_cents: effective_plan(&c.phases, Month::of(today)),
                 spent_cents: c.activity_cents,
                 is_everyday: c.is_everyday,
-                bills_total_cents: Cents::ZERO,
+                bills_cover_cents: Cents::ZERO,
             })
             .collect();
         let lp_bills: Vec<BillForLowPoint> = bills
@@ -884,6 +968,128 @@ mod tests {
             bal += e.amount_cents;
             assert_eq!(e.balance_after_cents, bal);
         }
+    }
+
+    #[test]
+    fn a_bill_that_already_posted_is_not_taken_from_the_plan_twice() {
+        // Medications: plan $400; Ozempic is a $349 monthly bill whose
+        // October charge posted on the 10th, so `next_due` is Nov 9 and the
+        // $349 is in the month's activity. $51 of the plan is left to spread
+        // over Oct 11–31, not $0.
+        let today = d("2026-10-11");
+        let meds = other("Medications", 400, 349);
+        let mut ozempic = bill("Ozempic", "2026-11-09", 349, 1);
+        ozempic.category_id = Some(meds.id);
+        let t = cash_timeline(
+            Cents::dollars(3000),
+            today,
+            d("2026-10-31"),
+            &biweekly(),
+            std::slice::from_ref(&meds),
+            std::slice::from_ref(&ozempic),
+            &[],
+        );
+        assert_eq!(t.bills_cents, Cents::ZERO);
+        assert_eq!(t.plan_cents, Cents::dollars(51));
+        // Through November: the bill lands on the 9th and November's other
+        // $51 is spread over its days.
+        let t = cash_timeline(
+            Cents::dollars(3000),
+            today,
+            d("2026-11-30"),
+            &biweekly(),
+            std::slice::from_ref(&meds),
+            std::slice::from_ref(&ozempic),
+            &[],
+        );
+        assert_eq!(t.bills_cents, Cents::dollars(349));
+        assert_eq!(t.plan_cents, Cents::dollars(102));
+
+        // Not posted yet (due Oct 20, nothing spent): the bill is still to
+        // come, so the plan has $51 left above it either way.
+        let unpaid = other("Medications", 400, 0);
+        let mut due = bill("Ozempic", "2026-10-20", 349, 1);
+        due.category_id = Some(unpaid.id);
+        let t = cash_timeline(
+            Cents::dollars(3000),
+            today,
+            d("2026-10-31"),
+            &biweekly(),
+            std::slice::from_ref(&unpaid),
+            std::slice::from_ref(&due),
+            &[],
+        );
+        assert_eq!(t.bills_cents, Cents::dollars(349));
+        assert_eq!(t.plan_cents, Cents::dollars(51));
+    }
+
+    #[test]
+    fn a_per_paycheck_bill_counts_only_the_paydays_left() {
+        // Three paydays in October (2, 16, 30); the Oct 2 charge posted, so
+        // `next_due` is the 16th and $282 is in the activity. Two more
+        // occurrences are due: $900 − 282 − 2 × 282 = $54 left to spread.
+        let today = d("2026-10-11");
+        let giving = other("Giving", 900, 282);
+        let mut calvary = bill("Calvary", "2026-10-16", 282, 1);
+        calvary.per_paycheck = true;
+        calvary.category_id = Some(giving.id);
+        let t = cash_timeline(
+            Cents::dollars(5000),
+            today,
+            d("2026-10-31"),
+            &biweekly(),
+            std::slice::from_ref(&giving),
+            std::slice::from_ref(&calvary),
+            &[],
+        );
+        assert_eq!(t.bills_cents, Cents::dollars(282 * 2));
+        assert_eq!(t.plan_cents, Cents::dollars(54));
+    }
+
+    #[test]
+    fn a_bill_due_less_often_than_monthly_still_holds_its_set_aside() {
+        // A $300 quarterly bill due in December with a $100/month plan: the
+        // plan is the set-aside, not cash leaving, so nothing is spread in
+        // October or November, and in December the bill itself covers it.
+        let today = d("2026-10-11");
+        let insurance = other("Insurance", 100, 0);
+        let mut premium = bill("Premium", "2026-12-15", 300, 3);
+        premium.category_id = Some(insurance.id);
+        let t = cash_timeline(
+            Cents::dollars(5000),
+            today,
+            d("2026-12-31"),
+            &biweekly(),
+            std::slice::from_ref(&insurance),
+            std::slice::from_ref(&premium),
+            &[],
+        );
+        assert_eq!(t.bills_cents, Cents::dollars(300));
+        assert_eq!(t.plan_cents, Cents::ZERO);
+    }
+
+    #[test]
+    fn bills_cover_follows_splits_and_lands_overdue_ones_today() {
+        let today = d("2026-10-11");
+        let month = Month::of(today);
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let mut split = bill("Internet", "2026-10-20", 100, 1);
+        split.category_id = Some(a);
+        split.splits = vec![BillSplitShare {
+            category_id: b,
+            amount_cents: Cents::dollars(40),
+        }];
+        // Past due with no charge: lands today, so it is still to come this
+        // month; its Nov 4 occurrence is next month's.
+        let mut missed = bill("Missed", "2026-10-04", 25, 1);
+        missed.category_id = Some(b);
+        // Posted for October (next_due already in November): nothing this month.
+        let mut paid = bill("Paid", "2026-11-02", 500, 1);
+        paid.category_id = Some(a);
+        let cover = bills_cover_by_category(&[split, missed, paid], month, today, &biweekly());
+        assert_eq!(cover[&a], Cents::dollars(60));
+        assert_eq!(cover[&b], Cents::dollars(65));
     }
 
     #[test]

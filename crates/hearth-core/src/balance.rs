@@ -158,10 +158,13 @@ pub struct CategoryForLowPoint {
     /// Unsigned spend so far this month.
     pub spent_cents: Cents,
     pub is_everyday: bool,
-    /// Monthly-equivalent total of the active bills in the category; the
-    /// bills themselves are projected on their dates, so only the plan
-    /// above them is spread.
-    pub bills_total_cents: Cents,
+    /// What the category's bills still take out of this month's plan: their
+    /// occurrences landing this month that have not posted (a posted one is
+    /// already in `spent_cents`), a bill due less often than monthly at least
+    /// its monthly equivalent. See `timeline::bills_cover_by_category`. The
+    /// bills themselves are projected on their dates, so only the plan above
+    /// this and what is spent is spread.
+    pub bills_cover_cents: Cents,
 }
 
 /// A recurring bill due in the window.
@@ -219,7 +222,7 @@ pub struct PlannedComponent {
 pub struct PlanComponent {
     pub category_id: Uuid,
     pub name: String,
-    /// `max(0, plan − bills_total − spent)` for the month.
+    /// `max(0, plan − spent − bills_cover)` for the month.
     pub remaining_cents: Cents,
     /// The share of it that falls before payday.
     pub amount_cents: Cents,
@@ -266,8 +269,10 @@ pub struct LowPoint {
 /// - Planned: outstanding planned items dated before `next_payday` (including
 ///   overdue ones — they will still post).
 /// - Plan remaining: every other spend category's
-///   `max(0, plan − bills_total − spent)` spread evenly over the days left in
-///   the month; the share before payday counts.
+///   `max(0, plan − spent − bills_cover)` spread evenly over the days left in
+///   the month; the share before payday counts. `bills_cover` is what its
+///   bills still take this month, not their full monthly equivalent, so a
+///   bill that already posted (and so is in `spent`) is not taken twice.
 pub fn projected_low_point(
     estimate: Cents,
     today: NaiveDate,
@@ -331,7 +336,7 @@ pub fn projected_low_point(
         .iter()
         .filter(|c| c.sign == Sign::Spend && !c.is_everyday)
     {
-        let remaining = (c.plan_cents - c.bills_total_cents - c.spent_cents).floor_zero();
+        let remaining = (c.plan_cents - c.spent_cents - c.bills_cover_cents).floor_zero();
         let amt = plan_share(remaining, days_until, days_left);
         if amt.0 > 0 {
             plan_out.push(PlanComponent {
@@ -542,7 +547,7 @@ mod tests {
             plan_cents: Cents::dollars(plan),
             spent_cents: Cents::dollars(spent),
             is_everyday: everyday,
-            bills_total_cents: Cents::ZERO,
+            bills_cover_cents: Cents::ZERO,
         }
     }
 
@@ -567,14 +572,26 @@ mod tests {
             cat("Rent", 1500, 1500, false),   // not everyday, fully spent → nothing left to spread
             cat("Giving", 440, 0, false), // not everyday: $440 over the 22 days left, 10 of them before payday → $200
             CategoryForLowPoint {
-                // bills cover the plan: nothing beyond them to spread
+                // bills still due cover the plan: nothing beyond them to spread
                 id: Uuid::new_v4(),
                 name: "Utilities".into(),
                 sign: Sign::Spend,
                 plan_cents: Cents::dollars(300),
                 spent_cents: Cents::dollars(20),
                 is_everyday: false,
-                bills_total_cents: Cents::dollars(300),
+                bills_cover_cents: Cents::dollars(300),
+            },
+            CategoryForLowPoint {
+                // a $349 bill posted on the 1st: it is in spent, and nothing of
+                // it is still due, so $51 of the plan is left to spread; 10 of
+                // the 22 days left fall before payday → $23.18
+                id: Uuid::new_v4(),
+                name: "Medications".into(),
+                sign: Sign::Spend,
+                plan_cents: Cents::dollars(400),
+                spent_cents: Cents::dollars(349),
+                is_everyday: false,
+                bills_cover_cents: Cents::ZERO,
             },
             CategoryForLowPoint {
                 // income categories are ignored
@@ -584,7 +601,7 @@ mod tests {
                 plan_cents: Cents::dollars(5000),
                 spent_cents: Cents::ZERO,
                 is_everyday: true,
-                bills_total_cents: Cents::ZERO,
+                bills_cover_cents: Cents::ZERO,
             },
         ];
         let bills = vec![
@@ -639,13 +656,17 @@ mod tests {
         assert_eq!(lp.planned.len(), 2);
         assert_eq!(lp.planned[0].item, "Overdue thing");
         assert_eq!(lp.planned_items_cents, Cents::dollars(425));
-        assert_eq!(lp.plan_remaining.len(), 1);
+        assert_eq!(lp.plan_remaining.len(), 2);
         assert_eq!(lp.plan_remaining[0].name, "Giving");
         assert_eq!(lp.plan_remaining[0].remaining_cents, Cents::dollars(440));
-        assert_eq!(lp.plan_remaining_cents, Cents::dollars(200));
+        assert_eq!(lp.plan_remaining[0].amount_cents, Cents::dollars(200));
+        assert_eq!(lp.plan_remaining[1].name, "Medications");
+        assert_eq!(lp.plan_remaining[1].remaining_cents, Cents::dollars(51));
+        assert_eq!(lp.plan_remaining[1].amount_cents, Cents(5100 * 10 / 22));
+        assert_eq!(lp.plan_remaining_cents, Cents::dollars(200) + Cents(2318));
         assert_eq!(
             lp.low_point_cents,
-            Cents::dollars(2000 - 200 - 400 - 425 - 200)
+            Cents::dollars(2000 - 200 - 400 - 425 - 200) - Cents(2318)
         );
         assert_eq!(plan_share(Cents::dollars(440), 30, 22), Cents::dollars(440));
         assert_eq!(plan_share(Cents::dollars(440), 0, 22), Cents::ZERO);
