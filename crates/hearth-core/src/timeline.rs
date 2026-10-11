@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::bills::advance;
-use crate::budget::{PlanPhase, Sign, effective_plan, monthly_plan};
+use crate::budget::{PlanPhase, Sign, effective_plan, monthly_plan, paychecks_in_month};
 use crate::calendar::Month;
 use crate::money::Cents;
 use crate::settings::PaySchedule;
@@ -23,6 +23,8 @@ pub struct CategoryForTimeline {
     pub sign: Sign,
     pub is_everyday: bool,
     pub plan_per_paycheck: bool,
+    /// Paid on its own rhythm; `None` = the household schedule.
+    pub pay_schedule: Option<PaySchedule>,
     pub phases: Vec<PlanPhase>,
     /// Unsigned activity so far in the current month (spent, or received).
     pub activity_cents: Cents,
@@ -97,7 +99,8 @@ pub struct Timeline {
     pub bills_cents: Cents,
     pub planned_cents: Cents,
     pub everyday_cents: Cents,
-    /// Paydays in the window (strictly after today).
+    /// Paydays in the window (strictly after today): the household
+    /// schedule's, plus those of income categories paid on their own.
     pub paydays: Vec<NaiveDate>,
     pub overdue_count: usize,
     /// This month's plan for income categories that are not per paycheck.
@@ -138,9 +141,10 @@ fn everyday_pace(
     schedule: &PaySchedule,
 ) -> Cents {
     let month = Month::of(date);
-    let n = *paychecks
+    let household = *paychecks
         .entry(month)
         .or_insert_with(|| schedule.paydays_in_month(month).len() as u32);
+    let n = paychecks_in_month(c.pay_schedule.as_ref(), month, household);
     let plan = monthly_plan(&c.phases, month, c.plan_per_paycheck, n);
     let plan_pace = plan.div_round(month.days_in_month() as i64);
     if month == Month::of(today) {
@@ -154,7 +158,8 @@ fn everyday_pace(
 /// Build the timeline from `today` through `until` (inclusive).
 ///
 /// - Paychecks: each payday strictly after today credits every income
-///   category whose plan is per paycheck with that month's phase amount.
+///   category whose plan is per paycheck with that month's phase amount; a
+///   category with its own pay schedule lands on its own paydays.
 /// - Bills: each occurrence of an active bill from `next_due` by its cadence.
 ///   A `next_due` before today is overdue and lands today.
 /// - Planned: outstanding one-offs on their date; overdue ones land today.
@@ -173,12 +178,16 @@ pub fn cash_timeline(
     let mut paychecks: HashMap<Month, u32> = HashMap::new();
     let mut events: Vec<Event> = Vec::new();
 
-    let paydays = schedule.paydays_between(today, until);
-    for p in &paydays {
-        for c in categories
-            .iter()
-            .filter(|c| c.sign == Sign::Income && c.plan_per_paycheck)
-        {
+    let mut paydays = schedule.paydays_between(today, until);
+    for c in categories
+        .iter()
+        .filter(|c| c.sign == Sign::Income && c.plan_per_paycheck)
+    {
+        let own = c
+            .pay_schedule
+            .as_ref()
+            .map(|s| s.paydays_between(today, until));
+        for p in own.as_deref().unwrap_or(&paydays) {
             let amt = effective_plan(&c.phases, Month::of(*p));
             if amt.0 > 0 {
                 events.push(Event {
@@ -194,7 +203,12 @@ pub fn cash_timeline(
                 });
             }
         }
+        if let Some(days) = own {
+            paydays.extend(days);
+        }
     }
+    paydays.sort();
+    paydays.dedup();
 
     for b in bills.iter().filter(|b| b.amount_cents.0 > 0) {
         let mut due = b.next_due;
@@ -408,6 +422,7 @@ mod tests {
             sign: Sign::Income,
             is_everyday: false,
             plan_per_paycheck: per_paycheck.is_some(),
+            pay_schedule: None,
             phases: vec![phase("2026-01", per_paycheck.or(monthly).unwrap_or(0))],
             activity_cents: Cents::ZERO,
         }
@@ -420,6 +435,7 @@ mod tests {
             sign: Sign::Spend,
             is_everyday: true,
             plan_per_paycheck: false,
+            pay_schedule: None,
             phases: vec![phase("2026-01", plan)],
             activity_cents: Cents::dollars(spent),
         }
@@ -654,6 +670,50 @@ mod tests {
         assert_eq!(t.end_cents, Cents::dollars(370));
         assert_eq!(t.low_cents, Cents::dollars(370));
         assert_eq!(t.low_date, d("2026-11-03"));
+    }
+
+    #[test]
+    fn an_income_with_its_own_schedule_lands_on_its_own_paydays() {
+        let today = d("2026-10-11");
+        let mut side = income("Side job", Some(500), None);
+        side.pay_schedule = Some(PaySchedule::Monthly { day: 1 });
+        let cats = vec![income("Paycheck", Some(1800), None), side];
+        let t = cash_timeline(
+            Cents::dollars(1000),
+            today,
+            d("2026-11-15"),
+            &biweekly(),
+            &cats,
+            &[],
+            &[],
+        );
+        // Household paydays plus the side job's own, merged and in order.
+        assert_eq!(
+            t.paydays,
+            vec![
+                d("2026-10-16"),
+                d("2026-10-30"),
+                d("2026-11-01"),
+                d("2026-11-13")
+            ]
+        );
+        let paychecks: Vec<(NaiveDate, &str, Cents)> = t
+            .entries
+            .iter()
+            .filter(|e| e.kind == TimelineKind::Paycheck)
+            .map(|e| (e.date, e.label.as_str(), e.amount_cents))
+            .collect();
+        assert_eq!(
+            paychecks,
+            vec![
+                (d("2026-10-16"), "Paycheck", Cents::dollars(1800)),
+                (d("2026-10-30"), "Paycheck", Cents::dollars(1800)),
+                (d("2026-11-01"), "Side job", Cents::dollars(500)),
+                (d("2026-11-13"), "Paycheck", Cents::dollars(1800)),
+            ]
+        );
+        assert_eq!(t.income_cents, Cents::dollars(5900));
+        assert_eq!(t.unscheduled_income_monthly_cents, Cents::ZERO);
     }
 
     #[test]

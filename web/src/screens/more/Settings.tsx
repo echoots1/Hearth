@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PayScheduleFields } from "../../components/PayScheduleForm";
 import { Card, CardHead, ErrorNote, Field, MoneyInput, PageHeader, Spinner, Toggle } from "../../components/ui";
 import { tool } from "../../lib/api";
 import { useSettings } from "../../lib/data";
@@ -15,32 +16,16 @@ export function SettingsScreen() {
   const save = useMutation((key: string, value: unknown) => tool("household.update_settings", { key, value }), ["household.", "balance.", "budget."]);
   if (!s) return <Spinner />;
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => { setS({ ...s, [key]: value }); void save.run(key as string, value); };
-  const ps = s.pay_schedule;
   return (
     <>
       <PageHeader title="Settings" back="/more" />
       {!owner && <ErrorNote error="Only the owner can change settings." />}
       <fieldset disabled={!owner} className="contents">
       <Card className="divider overflow-hidden">
-        <CardHead title="Paydays" />
+        <CardHead title="Paydays" right="the household default" />
         <div className="flex flex-col gap-3 p-4">
-          <Field label="Schedule">
-            <select className="field" value={ps.kind} onChange={(e) => {
-              const kind = e.target.value as Settings["pay_schedule"]["kind"];
-              const today = new Date().toISOString().slice(0, 10);
-              set("pay_schedule", kind === "semimonthly" ? { kind, days: [1, 15] } : kind === "monthly" ? { kind, day: 1 } : { kind, anchor: today });
-            }}>
-              <option value="semimonthly">Twice a month</option><option value="biweekly">Every two weeks</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
-            </select>
-          </Field>
-          {ps.kind === "semimonthly" && (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="First payday"><input className="field" type="number" min={1} max={31} value={ps.days[0]} onChange={(e) => set("pay_schedule", { kind: "semimonthly", days: [Number(e.target.value), ps.days[1]] })} /></Field>
-              <Field label="Second payday" hint="31 = last day of the month"><input className="field" type="number" min={1} max={31} value={ps.days[1]} onChange={(e) => set("pay_schedule", { kind: "semimonthly", days: [ps.days[0], Number(e.target.value)] })} /></Field>
-            </div>
-          )}
-          {ps.kind === "monthly" && <Field label="Day of month"><input className="field" type="number" min={1} max={31} value={ps.day} onChange={(e) => set("pay_schedule", { kind: "monthly", day: Number(e.target.value) })} /></Field>}
-          {(ps.kind === "weekly" || ps.kind === "biweekly") && <Field label="A recent payday" hint="Hearth counts forward from it."><input className="field" type="date" value={ps.anchor} onChange={(e) => set("pay_schedule", { kind: ps.kind, anchor: e.target.value })} /></Field>}
+          <PayScheduleFields value={s.pay_schedule} onChange={(v) => set("pay_schedule", v)} />
+          <p className="text-muted text-[12px] font-semibold">The main paycheck. An income paid on a different rhythm gets its own schedule on its category (Budget → category → edit).</p>
         </div>
       </Card>
 

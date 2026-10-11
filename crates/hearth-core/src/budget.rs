@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::calendar::Month;
 use crate::money::Cents;
+use crate::settings::PaySchedule;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -100,10 +101,24 @@ pub struct CategoryInput {
     pub phases: Vec<PlanPhase>,
     /// The phase amounts are per paycheck, not per month.
     pub plan_per_paycheck: bool,
+    /// This category's own paydays, when it is paid on a different rhythm
+    /// from the household schedule. `None` = the household's.
+    pub pay_schedule: Option<PaySchedule>,
     /// Monthly-equivalent total of the active bills in this category (derived by the caller).
     pub bills_total_cents: Cents,
     /// Signed sum of this month's transactions in the category.
     pub actual_cents: Cents,
+}
+
+/// Paydays in `month` for a category: its own schedule's, or the
+/// household's count when it has none.
+pub fn paychecks_in_month(
+    own: Option<&PaySchedule>,
+    month: Month,
+    household_paychecks: u32,
+) -> u32 {
+    own.map(|s| s.paydays_in_month(month).len() as u32)
+        .unwrap_or(household_paychecks)
 }
 
 #[derive(Clone, Debug)]
@@ -140,8 +155,11 @@ pub struct CategoryView {
     pub plan_per_paycheck: bool,
     /// The phase amount when the plan is per paycheck; zero otherwise.
     pub per_paycheck_cents: Cents,
-    /// Paydays in the month under the household's pay schedule.
+    /// Paydays in the month: this category's own schedule's when it has
+    /// one, else the household's.
     pub paychecks_in_month: u32,
+    /// The category's own pay schedule, if any.
+    pub pay_schedule: Option<PaySchedule>,
     /// Signed sum of transactions.
     pub actual_cents: Cents,
     /// Unsigned activity: `-actual` for spend, `actual` for income.
@@ -187,7 +205,11 @@ pub struct MonthView {
     pub uncategorized_cents: Cents,
 }
 
-pub fn category_view(c: &CategoryInput, month: Month, paychecks_in_month: u32) -> CategoryView {
+/// `household_paychecks` is the household schedule's payday count for the
+/// month; a category with its own schedule uses its own count instead.
+pub fn category_view(c: &CategoryInput, month: Month, household_paychecks: u32) -> CategoryView {
+    let paychecks_in_month =
+        paychecks_in_month(c.pay_schedule.as_ref(), month, household_paychecks);
     let plan = monthly_plan(&c.phases, month, c.plan_per_paycheck, paychecks_in_month);
     let activity = match c.sign {
         Sign::Spend => -c.actual_cents,
@@ -217,6 +239,7 @@ pub fn category_view(c: &CategoryInput, month: Month, paychecks_in_month: u32) -
             Cents::ZERO
         },
         paychecks_in_month,
+        pay_schedule: c.pay_schedule.clone(),
         actual_cents: c.actual_cents,
         activity_cents: activity,
         remaining_cents: remaining,
@@ -231,13 +254,14 @@ pub fn category_view(c: &CategoryInput, month: Month, paychecks_in_month: u32) -
 
 /// Build the whole month view. Groups come out in `sort_order`, categories in
 /// `sort_order` then name. Uncategorized activity is reported separately.
-/// `paychecks_in_month` scales the per-paycheck plans (see [`monthly_plan`]).
+/// `household_paychecks` (the household schedule's paydays in the month)
+/// scales per-paycheck plans of categories without their own schedule.
 pub fn month_view(
     month: Month,
     groups: &[GroupInput],
     categories: &[CategoryInput],
     uncategorized_cents: Cents,
-    paychecks_in_month: u32,
+    household_paychecks: u32,
 ) -> MonthView {
     let mut groups_sorted: Vec<&GroupInput> = groups.iter().collect();
     groups_sorted.sort_by(|a, b| {
@@ -267,7 +291,7 @@ pub fn month_view(
         });
         let views: Vec<CategoryView> = cats
             .iter()
-            .map(|c| category_view(c, month, paychecks_in_month))
+            .map(|c| category_view(c, month, household_paychecks))
             .collect();
 
         let mut plan = Cents::ZERO;
@@ -407,6 +431,7 @@ mod tests {
                 sort_order: 0,
                 phases: vec![phase("2026-01", 5000, None)],
                 plan_per_paycheck: false,
+                pay_schedule: None,
                 actual_cents: Cents::dollars(2500),
             },
             CategoryInput {
@@ -420,6 +445,7 @@ mod tests {
                 sort_order: 1,
                 phases: vec![phase("2026-01", 800, None)],
                 plan_per_paycheck: false,
+                pay_schedule: None,
                 actual_cents: Cents::dollars(-900),
             },
             CategoryInput {
@@ -433,6 +459,7 @@ mod tests {
                 sort_order: 0,
                 phases: vec![phase("2026-01", 200, None)],
                 plan_per_paycheck: false,
+                pay_schedule: None,
                 actual_cents: Cents::dollars(-50),
             },
         ];
@@ -473,6 +500,7 @@ mod tests {
             sort_order: 0,
             phases: vec![],
             plan_per_paycheck: false,
+            pay_schedule: None,
             actual_cents: Cents(-1),
         };
         assert_eq!(category_view(&c, m("2026-01"), 2).used_bps, 10_000);
@@ -494,6 +522,7 @@ mod tests {
                 phase("2026-04", 1900, Some("raise")),
             ],
             plan_per_paycheck: true,
+            pay_schedule: None,
             actual_cents: Cents::dollars(3600),
         };
         // A two-paycheck month.
@@ -521,5 +550,17 @@ mod tests {
             monthly_plan(&c.phases, m("2026-05"), false, 3),
             Cents::dollars(1900)
         );
+        // A category paid on its own rhythm counts its own paydays, not the
+        // household's: monthly on the 1st is one paycheck whatever the
+        // household gets.
+        let own = CategoryInput {
+            pay_schedule: Some(PaySchedule::Monthly { day: 1 }),
+            ..c.clone()
+        };
+        let v = category_view(&own, m("2026-01"), 3);
+        assert_eq!(v.paychecks_in_month, 1);
+        assert_eq!(v.plan_cents, Cents::dollars(1800));
+        assert_eq!(v.pay_schedule, Some(PaySchedule::Monthly { day: 1 }));
+        assert_eq!(paychecks_in_month(None, m("2026-01"), 3), 3);
     }
 }

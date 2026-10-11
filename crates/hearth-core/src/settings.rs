@@ -154,7 +154,9 @@ impl AssistantSettings {
     }
 }
 
-/// When paychecks arrive.
+/// When paychecks arrive. The household has one; an income category may
+/// carry its own when it is paid on a different rhythm.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PaySchedule {
@@ -226,6 +228,17 @@ impl PaySchedule {
                 return out;
             }
             out.push(d);
+        }
+    }
+
+    /// How many paychecks a typical month holds: what a person means by
+    /// "my paycheck times two". Weekly 4, biweekly and semimonthly 2,
+    /// monthly 1. Used to convert a plan between per month and per paycheck.
+    pub fn typical_paychecks_per_month(&self) -> u32 {
+        match self {
+            PaySchedule::Weekly { .. } => 4,
+            PaySchedule::Biweekly { .. } | PaySchedule::Semimonthly { .. } => 2,
+            PaySchedule::Monthly { .. } => 1,
         }
     }
 
@@ -529,6 +542,10 @@ mod tests {
             m.paydays_in_month("2026-02".parse().unwrap()),
             vec![d("2026-02-01")]
         );
+        assert_eq!(s.typical_paychecks_per_month(), 2);
+        assert_eq!(w.typical_paychecks_per_month(), 4);
+        assert_eq!(semi.typical_paychecks_per_month(), 2);
+        assert_eq!(m.typical_paychecks_per_month(), 1);
     }
 
     #[test]

@@ -305,6 +305,8 @@ pub struct Category {
     /// Plan phases are per paycheck; the month's plan is the amount times the
     /// paydays in the month.
     pub plan_per_paycheck: bool,
+    /// Paid on its own rhythm; null = the household's pay schedule.
+    pub pay_schedule: Option<sqlx::types::Json<hearth_core::settings::PaySchedule>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -154,6 +154,9 @@ pub struct CategoryCreateArgs {
     /// Plan per paycheck instead of per month: the month's plan is the amount
     /// times the paydays in it (a biweekly schedule gives some months three).
     pub plan_per_paycheck: Option<bool>,
+    /// Paid on its own rhythm instead of the household pay schedule, e.g.
+    /// `{"kind": "monthly", "day": 1}` or `{"kind": "biweekly", "anchor": "2026-10-09"}`.
+    pub pay_schedule: Option<hearth_core::settings::PaySchedule>,
     pub note: Option<String>,
     /// Plan for this month onward, in cents (per paycheck when `plan_per_paycheck`).
     pub plan_cents: Option<Cents>,
@@ -166,7 +169,12 @@ pub struct CategoryUpdateArgs {
     pub group_id: Option<Uuid>,
     pub is_everyday: Option<bool>,
     /// Plan per paycheck instead of per month (see `budget.create_category`).
+    /// Switching converts the plan amounts so the month's plan stays the same.
     pub plan_per_paycheck: Option<bool>,
+    /// This category's own pay schedule (same shape as the household setting).
+    pub pay_schedule: Option<hearth_core::settings::PaySchedule>,
+    /// Drop its own schedule and follow the household's.
+    pub clear_pay_schedule: Option<bool>,
     pub is_archived: Option<bool>,
     pub sort_order: Option<i32>,
 }
@@ -850,6 +858,7 @@ pub fn tools() -> Vec<ToolDef> {
                                 note: a.note.clone(),
                                 is_everyday: a.is_everyday,
                                 plan_per_paycheck: a.plan_per_paycheck,
+                                pay_schedule: a.pay_schedule.clone(),
                                 sort_order: None,
                                 plan_cents: a.plan_cents,
                             },
@@ -868,7 +877,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "budget.update_category",
-            "Rename, move, flag (everyday, per-paycheck plan) or archive a category.",
+            "Rename, move, flag (everyday, per-paycheck plan, own pay schedule) or archive a category. Switching the per-paycheck flag converts the plan amounts (÷ or × the typical paychecks a month) so the month's plan is unchanged.",
             CategoryUpdateArgs,
             writes = true,
             area = Some(Area::PlansBills),
@@ -877,9 +886,11 @@ pub fn tools() -> Vec<ToolDef> {
                 let args = args_of(&a);
                 gated(&tc, Area::PlansBills, "budget.update_category", &args, format!("Update category “{}”", before.name), (None, None), || async {
                 let after = services::budget::update_category(&tc.ctx, &tc.actor, a.category_id, services::budget::UpdateCategory {
-                    group_id: a.group_id, name: a.name.clone(), is_everyday: a.is_everyday, plan_per_paycheck: a.plan_per_paycheck, is_archived: a.is_archived, sort_order: a.sort_order, ..Default::default()
+                    group_id: a.group_id, name: a.name.clone(), is_everyday: a.is_everyday, plan_per_paycheck: a.plan_per_paycheck,
+                    pay_schedule: a.pay_schedule.clone(), clear_pay_schedule: a.clear_pay_schedule, is_archived: a.is_archived, sort_order: a.sort_order, ..Default::default()
                 }).await?;
-                let u = undo("budget.update_category", json!({ "category_id": before.id, "name": before.name, "group_id": before.group_id, "is_everyday": before.is_everyday, "plan_per_paycheck": before.plan_per_paycheck, "is_archived": before.is_archived, "sort_order": before.sort_order }), "Restore category");
+                let u = undo("budget.update_category", json!({ "category_id": before.id, "name": before.name, "group_id": before.group_id, "is_everyday": before.is_everyday, "plan_per_paycheck": before.plan_per_paycheck,
+                    "pay_schedule": before.pay_schedule, "clear_pay_schedule": before.pay_schedule.is_none(), "is_archived": before.is_archived, "sort_order": before.sort_order }), "Restore category");
                 Ok((after.clone(), j(&before), j(&after), u))
             }).await?
             }

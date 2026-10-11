@@ -60,6 +60,13 @@ export type Account = {
 
 export type NextPhase = { label: string | null; plan_cents: number; starts_month: string };
 
+/** When paychecks arrive: the household setting, or an income category's own. */
+export type PaySchedule =
+  | { kind: "weekly"; anchor: string }
+  | { kind: "biweekly"; anchor: string }
+  | { kind: "semimonthly"; days: [number, number] }
+  | { kind: "monthly"; day: number };
+
 export type CategoryView = {
   id: string;
   name: string;
@@ -70,7 +77,9 @@ export type CategoryView = {
   plan_cents: number;
   plan_per_paycheck: boolean;
   per_paycheck_cents: number;
+  /** This category's own schedule's paydays this month when it has one, else the household's. */
   paychecks_in_month: number;
+  pay_schedule: PaySchedule | null;
   actual_cents: number;
   activity_cents: number;
   remaining_cents: number;
@@ -112,6 +121,7 @@ export type Category = {
   note: string;
   is_everyday: boolean;
   plan_per_paycheck: boolean;
+  pay_schedule: PaySchedule | null;
   sort_order: number;
   is_archived: boolean;
 };
@@ -446,11 +456,7 @@ export type ApiKey = {
 export type UserInfo = { id: string; email: string; display_name: string; role: "owner" | "member" };
 
 export type Settings = {
-  pay_schedule:
-    | { kind: "weekly"; anchor: string }
-    | { kind: "biweekly"; anchor: string }
-    | { kind: "semimonthly"; days: [number, number] }
-    | { kind: "monthly"; day: number };
+  pay_schedule: PaySchedule;
   cash_floor_cents: number;
   large_charge_threshold_cents: number;
   pace_alert: { ratio_pct: number; from_day: number };
