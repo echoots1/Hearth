@@ -1,11 +1,27 @@
+# Hearth: the app plus Postgres.
+#
+# Pulls the published image. To build from source instead, add the override:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Settings come from .env next to this file (copy .env.example) or from your
+# shell. Every ${VAR:-default} below can also be replaced with a literal value
+# if you would rather keep everything in this file; deploy/truenas/ has a copy
+# written that way.
 services:
   app:
-    build: .
-    image: hearth:local
+    image: ghcr.io/echoots1/hearth:${HEARTH_TAG:-main}
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      APP_SECRET: ${APP_SECRET:-}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       DATABASE_URL: postgres://${POSTGRES_USER:-hearth}:${POSTGRES_PASSWORD:-hearth}@db:5432/${POSTGRES_DB:-hearth}
+      # The container always listens on 3000; PORT in .env is the host port below.
+      PORT: "3000"
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
