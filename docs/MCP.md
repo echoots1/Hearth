@@ -138,7 +138,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `accounts.update` | always applies | Rename an account, change its type (checking, savings, credit card, loan…), change whether it counts as cash, or deactivate it. Works on synced accounts too. |
 | `alerts.ack` | always applies | Acknowledge an alert (a human has seen it; nagging stops). |
 | `alerts.reopen` | always applies | Reopen a done alert. |
-| `alerts.resolve` | always applies | Mark an alert done with a short resolution. |
+| `alerts.resolve` | always applies | Mark an alert done with a short resolution. It stays done while its condition persists; only a condition that clears and comes back raises a new alert. |
 | `alerts.snooze` | always applies | Pause nagging on an alert until a time. |
 | `assistant.summary_write` | always applies | Leave a short report of a pass; shows in Activity and marks the pass time. |
 | `balance.set_reported` | categorizing_notes | Record the balance a person just read off their bank, with when they read it. |

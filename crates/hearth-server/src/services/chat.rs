@@ -67,7 +67,8 @@ async fn check_cap(ctx: &Ctx, cap: Cents) -> Result<()> {
             goal_id: None,
             context: json!({ "cap_cents": cap, "spent_cents": spent }),
         };
-        super::alerts::upsert_candidates(ctx, "api", &[a]).await?;
+        // Once per month: a resolved cap alert stays resolved for the month.
+        super::alerts::upsert_candidates(ctx, "api", &[a], None).await?;
         return Err(invalid(format!(
             "monthly Claude API cap reached ({cap}); raise it under More → Assistant"
         )));

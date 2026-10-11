@@ -245,7 +245,20 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
         review_pending_oldest,
     };
     let candidates = alerts::evaluate(&snapshot);
-    let summary = services::alerts::upsert_candidates(&ctx, "evaluate", &candidates).await?;
+    // The previous successful run of this job: a done alert its evaluator saw
+    // then is a condition that persisted through the resolve, not a new one.
+    let previous_run: Option<(DateTime<Utc>,)> = sqlx::query_as(
+        "select started_at from job_runs where job = 'evaluate' and status = 'ok' order by started_at desc limit 1",
+    )
+    .fetch_optional(&ctx.pool)
+    .await?;
+    let summary = services::alerts::upsert_candidates(
+        &ctx,
+        "evaluate",
+        &candidates,
+        previous_run.map(|(t,)| t),
+    )
+    .await?;
 
     // Bookkeeping the evaluator relies on next time (not decisions).
     for (id, payoff) in payoff_updates {
@@ -270,6 +283,7 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
         "candidates": candidates.len(),
         "created": summary.created,
         "refreshed": summary.refreshed,
+        "suppressed": summary.suppressed,
         "goals_reached": reached,
         "low_point_cents": snapshot.low_point.as_ref().map(|l| l.low_point_cents),
     }))

@@ -229,7 +229,11 @@ Intervals are env-configurable; the defaults:
 | `housekeeping` | daily | prune old job runs, expired sessions, dead push subscriptions, delivered notification rows | touch money data |
 
 **Alert catalogue.** Each has a dedupe key so re-running never duplicates
-it, and a default severity:
+it, and a default severity. A resolved alert stays resolved while its
+condition persists: `evaluate` only notes that it saw the condition again.
+Once a run has gone by without it, a reappearance is a new alert. Keys that
+carry a date (`bill not seen`, `stale balance`, `review backlog`) roll over
+on their own and raise again.
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
