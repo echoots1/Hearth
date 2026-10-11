@@ -1,0 +1,13 @@
+# Keep the Docker build context to the sources. Local build output and
+# dependencies are rebuilt inside the image stages.
+target/
+web/node_modules/
+web/dist/
+.env
+.env.*
+!.env.example
+.git/
+.github/
+docs/
+scripts/
+*.md
