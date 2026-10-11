@@ -18,7 +18,7 @@ a phone and widens gracefully. Demo data only in mockups and seeds.
 ## Navigation
 
 Bottom nav, five items: **Budget** (home), **Activity**, **Plan**,
-**Debts**, **More** (accounts, rules, settings, users, API keys,
+**Goals**, **More** (accounts, rules, settings, users, API keys,
 integrations, jobs).
 
 ## Screens
@@ -84,6 +84,23 @@ A timeline of what's coming, soonest first, with the same card language:
   the monthly set-aside, and an "update balance" button.
 - **One-offs**: planned items with status chips (planned · done · dropped).
 
-### Debts, More
+### Goals
 
-Follow the same card language; specified in ARCHITECTURE §9.
+Getting out of debt, then building savings; same card language.
+
+- **Debt-free date** hero: the projected month under the current strategy,
+  total interest remaining, and "N months sooner / $X less" if the extra
+  payment slider moves.
+- **Debts**: one card each with balance, APR, minimum, due day, interest per
+  day, payoff month, and the order the strategy pays them in. Tap → edit,
+  set balance, what-if a charge.
+- **Strategy**: avalanche · snowball · custom, shown side by side with payoff
+  month and total interest; the chosen one is highlighted. Switching is a
+  deliberate tap (or the assistant's recorded suggestion), never automatic.
+- **Savings goals**: target, saved so far, monthly contribution, reach date
+  at current pace, and the pace needed for a target date.
+- *Later phase:* net worth over time from balance snapshots.
+
+### More
+
+Accounts, rules, settings, users, API keys, integrations, jobs.

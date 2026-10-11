@@ -19,15 +19,22 @@ the bill, puts it in the right category, sets the plan, and the app does the
 rest. Everything can also be done by hand in the UI; chat is the preferred
 front door, the UI is the fallback and the place you look.
 
-Hearth is **not**: a multi-user SaaS, an investment tracker, a bill-pay or
-money-movement tool, a receipt scanner, or a forecasting engine beyond the
-next paycheck. It runs on a home server in one Docker container, behind the
+Hearth also looks further out than the next paycheck: it forecasts **debt
+payoff** under the standard strategies and shows what an extra payment or a
+new charge does to the date and the interest; it projects **savings goals**
+(when you'll reach a target at the current pace, what pace reaches it by a
+date); and, in a later phase, it tracks **net worth and wealth building**
+once the debt is gone. The app does the math and lays out the options; the
+assistant turns them into advice.
+
+Hearth is **not**: a multi-user SaaS, a bill-pay or money-movement tool, a
+receipt scanner, or (in v1) an investment tracker or market data consumer. It runs on a home server in one Docker container, behind the
 family's own reverse proxy, and nothing about the household leaves that box
 except what the integrations the family turns on need.
 
 ## 2. Core concepts — proposed
 
-Ten nouns. Everything on screen and every MCP tool is made of these.
+Eleven nouns. Everything on screen and every MCP tool is made of these.
 
 | Noun | One line | Lives on screen as |
 | --- | --- | --- |
@@ -39,13 +46,15 @@ Ten nouns. Everything on screen and every MCP tool is made of these.
 | **Recurring bill** | A commitment that repeats: name, amount, cadence (monthly / every N months / yearly), next due date, the category it posts to, the account or card it hits, a match pattern, status (active / canceled / paused). Monthly bills drive the category plan and the bills-due-before-payday number; non-monthly bills drive the sinking-fund set-aside; canceled bills that charge again raise an alert. | Plan tab, category subtitle ("due 14th"), low-point tile |
 | **Planned item** | A one-off approved ahead of time so it isn't flagged when it posts. | Plan tab, low-point tile |
 | **Sinking fund** | The money set aside for non-monthly bills: a funded balance with an as-of, and the derived should-have-saved from the yearly/quarterly bills. | Plan tab → Sinking fund |
-| **Debt** | Balance, APR, minimum, due day; payoff projection and interest per day. | Debts tab |
+| **Debt** | Balance, APR, minimum, due day, planned payment; payoff projection, interest per day, what-if deltas. | Goals tab → Debts |
+| **Goal** | A savings target: name, target amount, optional target date, the account it accrues in, the monthly contribution (a category plan). Projection: date reached at current pace, or pace needed for the date. Debt-free is an implicit goal. | Goals tab → Savings |
 | **Alert / Question** | Something that needs a human: raised by a job (alert) or by the AI (question). Lifecycle open → notified → ack → done. | Activity inbox, attention pills |
 
 Derived, never stored: running estimate, projected low point, category
 rollups, pace, suggested category plans (sum of a category's bills), the
-sinking-fund should-have, debt projections, each bill's next due date after
-a match.
+sinking-fund should-have, debt projections and strategy comparisons, goal
+projections, each bill's next due date after a match. Later phase: net worth
+series from account and debt balance snapshots.
 
 ## 3. How a day works — proposed
 
@@ -65,7 +74,15 @@ a match.
    where it can, asks a question where it can't, records balances the
    humans report in chat, and answers "can we buy X?" by checking cash, the
    category, and the plan.
-7. **Planning happens in chat first.** "Add the gym, $45 on the 3rd" →
+7. **Getting out of debt and saving.** The app keeps the debt and savings
+   math current: payoff date and total interest per debt under avalanche,
+   snowball, and your custom order side by side; what one extra $N a month
+   does; what putting a purchase on a card costs in days and dollars; when
+   each savings goal lands at today's pace. The assistant uses those numbers
+   to make the actual suggestions ("move the $120 freed by the paid-off card
+   onto the 24% one; debt-free four months sooner, $310 less interest") and
+   records the decision as a plan change the humans can see.
+8. **Planning happens in chat first.** "Add the gym, $45 on the 3rd" →
    the AI creates the recurring bill, picks or creates the category, raises
    the plan if the bills in it now exceed it, and adds a match pattern so
    the charge categorizes itself. "Cancel the streaming service" → the bill
@@ -126,7 +143,7 @@ In-process scheduler (no external cron), Postgres advisory lock per job,
 | --- | --- | --- | --- |
 | sync:plaid / sync:privacy | 60 / 10 min | upsert transactions, balances, declines | categorize beyond rules |
 | process | after sync, 5 min | apply rules, match recurring bills and planned items, advance due dates, queue review | guess a category |
-| evaluate | 15 min | raise/refresh alerts by dedupe key | resolve or ack |
+| evaluate | 15 min | raise/refresh alerts by dedupe key; note debt/goal milestones (a debt paid off, a goal reached, payoff date slipped) | resolve or ack |
 | notify | 1 min | send, nag, respect quiet hours | interpret replies |
 | housekeeping | daily | prune runs, sessions, old deliveries | touch money data |
 
@@ -146,12 +163,14 @@ the UI uses, named `<noun>.<verb>`, money as `*_cents`, dates ISO.
 
 Reads: budget month view, category, balance overview (estimate + low point
 with components), transactions and review queue, recurring bills (upcoming,
-by category, canceled), planned, sinking, debts (+ projection, delay
-cost), alerts, questions, settings, "today".
+by category, canceled), planned, sinking, debts (+ projection under each strategy, strategy
+comparison, what-if for an extra payment or a new charge), goals (+
+projection), alerts, questions, settings, "today".
 Writes: categorize, set note, create manual transaction, apply rules,
 create rule, set plan phase, **add / update / cancel / pause a recurring
 bill**, create/update planned item, set reported balance, set sinking-fund
-balance, upsert debt, ack/resolve/snooze alert, ask/answer/dismiss question,
+balance, upsert debt, set debt strategy and extra payment, create/update a
+goal, ack/resolve/snooze alert, ask/answer/dismiss question,
 allow-listed settings.
 
 Planning tools are designed for one-sentence requests: `bills.add` takes
@@ -159,6 +178,13 @@ name, amount, cadence, next due, and optional category/account/pattern, and
 returns what it created plus any plan it raised, so the assistant can
 confirm in one line. When a category is ambiguous the assistant asks (a
 question), it does not guess.
+
+Forecasting tools return the numbers for every option, not a pick:
+`debts.compare` gives payoff month and total interest for avalanche,
+snowball, and custom; `debts.what_if` takes an extra monthly amount or a
+one-time charge and returns the delta in months and dollars; `goals.project`
+returns the reach date at current pace and the pace for a target date. The
+assistant recommends; the app never auto-applies a strategy change.
 
 "Can we buy X?" = `balance.get` (cash check) → `budget.get_month` (category
 check) → `planned.list` / `debts.delay_cost` (plan check) → YES / NOT NOW /
@@ -170,8 +196,11 @@ See `docs/UI.md`. Home is the Budget: cash card, attention pills, totals,
 grouped category rows. Activity is the single inbox for alerts, AI
 questions, and uncategorized transactions. **Plan** is a timeline of what's
 coming: recurring bills by due date, planned one-offs, and the sinking fund
-for the yearly ones, with add/edit by hand. Debts is its own tab; accounts,
-rules, settings, users, API keys, integrations and jobs live under More. Warm stone neutrals, one typeface, orange =
+for the yearly ones, with add/edit by hand. **Goals** holds debts and
+savings: each debt with balance, APR, interest per day and payoff date; a
+strategy comparison; a what-if control for extra payment; savings goals with
+reach dates. Accounts, rules, settings, users, API keys, integrations and
+jobs live under More. Later phase: a net-worth view on the Goals tab. Warm stone neutrals, one typeface, orange =
 attention, blue = income.
 
 ## 10. Security and privacy — proposed
@@ -194,3 +223,5 @@ institutions or people; seed data is obviously fake.
 | 6 | Is a category's plan set by hand, or derived from its bills? | Both: the plan is a number you (or the AI) set; the app shows "bills in this category total $X" and the AI raises the plan when a new bill would exceed it. Never silently lowers it. |
 | 7 | One bill → one category, or can a bill split? | One category per bill in v1. |
 | 8 | Do yearly bills live in a category too? | Yes: they post to their category in the month they hit; the set-aside shows as the Sinking fund row. |
+| 9 | Who suggests? | The app computes every option's numbers; only the assistant phrases a recommendation, and it records the decision as a visible plan change. No auto-applied strategy switches. |
+| 10 | Wealth building scope | Phase 2: net worth from balance snapshots, investment accounts with manually reported balances, contribution tracking. No brokerage sync or market data in scope yet. |
