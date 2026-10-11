@@ -3,6 +3,7 @@ import { Card, Icon, PageHeader, type IconName } from "../components/ui";
 import { useSession } from "../lib/session";
 
 const items: { to: string; label: string; hint: string; icon: IconName }[] = [
+  { to: "/chat", label: "Chat with Claude", hint: "API mode", icon: "sparkle" },
   { to: "/more/accounts", label: "Accounts", hint: "checking, savings, cards", icon: "bank" },
   { to: "/more/rules", label: "Rules", hint: "categorize on sight", icon: "rule" },
   { to: "/more/settings", label: "Settings", hint: "paydays, floor, thresholds, quiet hours", icon: "settings" },

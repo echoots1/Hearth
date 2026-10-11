@@ -7,6 +7,7 @@
 pub mod evaluate;
 pub mod housekeeping;
 pub mod notify;
+pub mod pass;
 pub mod process;
 
 use std::time::Duration;
@@ -23,11 +24,15 @@ use crate::tools::BoxFut;
 
 pub type Handler = fn(AppState) -> BoxFut<anyhow::Result<Value>>;
 
+pub type Gate = fn(AppState) -> BoxFut<bool>;
+
 pub struct Job {
     pub name: &'static str,
     pub description: &'static str,
     pub every: Duration,
     pub handler: Handler,
+    /// When set, the scheduler runs the job only if this says so; `jobs.run` ignores it.
+    pub gate: Option<Gate>,
 }
 
 pub fn actor(name: &str) -> Actor {
@@ -44,24 +49,35 @@ pub fn registry(state: &AppState) -> Vec<Job> {
             description: "apply rules, match bills and planned items, shadow-link card duplicates, queue the rest for review",
             every: Duration::from_secs(5 * 60),
             handler: |s| Box::pin(process::run(s)),
+            gate: None,
         },
         Job {
             name: "evaluate",
             description: "recompute the month and the low point; raise or refresh alerts by dedupe key; note milestones",
             every: Duration::from_secs(j.evaluate_minutes.max(1) * 60),
             handler: |s| Box::pin(evaluate::run(s)),
+            gate: None,
         },
         Job {
             name: "notify",
             description: "send new alerts, questions and proposals; nag unacknowledged alerts; honor quiet hours",
             every: Duration::from_secs(60),
             handler: |s| Box::pin(notify::run(s)),
+            gate: None,
         },
         Job {
             name: "housekeeping",
             description: "prune old job runs, expired sessions, dead push subscriptions and old notification rows",
             every: Duration::from_secs(24 * 60 * 60),
             handler: |s| Box::pin(housekeeping::run(s)),
+            gate: None,
+        },
+        Job {
+            name: "assistant:pass",
+            description: "API mode only: Claude works the queue once a day at the configured time and leaves a summary",
+            every: Duration::from_secs(10 * 60),
+            handler: |s| Box::pin(pass::run(s)),
+            gate: Some(|s| Box::pin(pass::gate(s))),
         },
     ];
     v.extend(crate::integrations::jobs(state));
@@ -196,9 +212,15 @@ pub fn spawn_scheduler(state: AppState) {
                         None
                     }
                 };
-                if is_due(&job, last.as_ref(), Utc::now())
-                    && let Err(e) = run_named(state.clone(), job.name, "schedule").await
+                if !is_due(&job, last.as_ref(), Utc::now()) {
+                    continue;
+                }
+                if let Some(gate) = job.gate
+                    && !gate(state.clone()).await
                 {
+                    continue;
+                }
+                if let Err(e) = run_named(state.clone(), job.name, "schedule").await {
                     tracing::error!(job = job.name, error = %e, "scheduler: run failed");
                 }
             }

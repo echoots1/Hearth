@@ -7,6 +7,7 @@ import { Login, Setup } from "./screens/Auth";
 import { Activity } from "./screens/Activity";
 import { Budget } from "./screens/Budget";
 import { CategoryScreen } from "./screens/Category";
+import { Chat } from "./screens/Chat";
 import { Goals } from "./screens/Goals";
 import { More } from "./screens/More";
 import { Plan } from "./screens/Plan";
@@ -42,6 +43,7 @@ function Gate() {
         <Route index element={<Budget />} />
         <Route path="category/:id" element={<CategoryScreen />} />
         <Route path="activity" element={<Activity />} />
+        <Route path="chat" element={<Chat />} />
         <Route path="plan" element={<Plan />} />
         <Route path="goals" element={<Goals />} />
         <Route path="more" element={<More />} />

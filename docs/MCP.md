@@ -372,7 +372,8 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
         "balance_stale",
         "sync_failed",
         "review_queue_backlog",
-        "milestone"
+        "milestone",
+        "api_spend_cap"
       ],
       "type": "string"
     }

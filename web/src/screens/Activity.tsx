@@ -241,6 +241,7 @@ function ReviewSection({ items }: { items: ReviewItem[] }) {
   const everyday = (groups.data?.categories ?? []).filter((c) => !c.is_archived && c.is_everyday);
   const income = (groups.data?.categories ?? []).filter((c) => !c.is_archived && c.sign === "income");
   const pull = today.data?.assistant.mode !== "api";
+  const passRun = useMutation(() => api.post("/api/assistant/pass", {}), [""]);
   return (
     <>
       <SectionTitle title="To categorize" right={`no rule matched · oldest ${shortDate(oldest)}`} />
@@ -264,9 +265,13 @@ function ReviewSection({ items }: { items: ReviewItem[] }) {
         {pull ? (
           <p className="text-muted text-[13px] font-semibold">Hearth is in Pull mode: Claude works the queue when its recurring task runs in the Claude app. To do it now, open the Claude app and say "take a Hearth pass". The categorizing area is {today.data?.assistant.categorizing_notes ?? today.data?.assistant.autonomy} mode.</p>
         ) : (
-          <p className="text-muted text-[13px] font-semibold">The API-mode pass runs on its schedule; running it on demand from here lands with the chat panel in a later step.</p>
+          <p className="text-muted text-[13px] font-semibold">Claude will work the queue now with your API key, within the monthly cap, and leave a summary in Activity. The categorizing area is {today.data?.assistant.categorizing_notes ?? today.data?.assistant.autonomy} mode.</p>
         )}
-        <SheetActions><button type="button" className="btn-dark" onClick={() => setAskOpen(false)}>OK</button></SheetActions>
+        <ErrorNote error={passRun.error} />
+        <SheetActions>
+          <button type="button" className="btn-light" onClick={() => setAskOpen(false)}>Close</button>
+          {!pull && <button type="button" className="btn-dark" disabled={passRun.busy} onClick={async () => { if ((await passRun.run()) !== undefined) setAskOpen(false); }}>{passRun.busy ? "Working…" : "Run the pass"}</button>}
+        </SheetActions>
       </Sheet>
     </>
   );

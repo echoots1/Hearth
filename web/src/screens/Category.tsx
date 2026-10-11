@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { useAccountName } from "../components/AccountPicker";
 import { Card, CardHead, ErrorNote, Field, Icon, MoneyInput, PageHeader, Progress, Sheet, SheetActions, Spinner, Stat, Toggle } from "../components/ui";
@@ -275,14 +275,18 @@ function AskClaudeSheet({ open, onClose, d, today, isCurrent }: { open: boolean;
   return (
     <Sheet open={open} onClose={onClose} title="Ask Claude">
       {api ? (
-        <p className="text-muted text-[13px] font-semibold">Chat in the app is part of API mode and is coming in a later step. For now, open the Claude app: it sees this category through the Hearth connector.</p>
+        <p className="text-muted text-[13px] font-semibold">Open the chat with this category's numbers already in the message.</p>
       ) : (
         <p className="text-muted text-[13px] font-semibold">Hearth is in Pull mode: open the Claude app and ask there. Claude reads this category through the Hearth connector. Paste this line to give it the context in one go:</p>
       )}
       <div className="bg-card border-line mt-3 rounded-xl border px-3 py-2 text-[13px] font-semibold">{line}</div>
       <SheetActions>
         <button type="button" className="btn-light" onClick={onClose}>Close</button>
-        <button type="button" className="btn-dark" onClick={async () => { try { await navigator.clipboard.writeText(line); setCopied(true); } catch { setCopied(false); } }}>{copied ? "Copied" : "Copy"}</button>
+        {api ? (
+          <Link to={`/chat?q=${encodeURIComponent(line + " — ")}`} className="btn-dark">Open chat</Link>
+        ) : (
+          <button type="button" className="btn-dark" onClick={async () => { try { await navigator.clipboard.writeText(line); setCopied(true); } catch { setCopied(false); } }}>{copied ? "Copied" : "Copy"}</button>
+        )}
       </SheetActions>
     </Sheet>
   );
