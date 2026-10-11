@@ -34,12 +34,26 @@ pub async fn list(_caller: ApiCaller) -> Json<Vec<ToolInfo>> {
     )
 }
 
+/// Tools a signed-in member may not call; the owner and API keys may.
+pub fn owner_only(name: &str) -> bool {
+    services::assistant::is_destructive(name)
+        || matches!(name, "jobs.run" | "household.update_settings")
+}
+
 pub async fn call(
     State(state): State<AppState>,
     caller: ApiCaller,
     Path(name): Path<String>,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
+    if let ApiCaller::User(u) = &caller
+        && u.role != crate::db::models::UserRole::Owner
+        && owner_only(&name)
+    {
+        return Err(ApiError::forbidden(format!(
+            "only the owner can call {name}"
+        )));
+    }
     let ctx = state.ctx().await?;
     let tc = ToolCtx {
         state: state.clone(),
@@ -121,6 +135,33 @@ impl From<serde_json::Error> for ApiError {
         ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: e.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::owner_only;
+
+    #[test]
+    fn destructive_and_admin_tools_are_owner_only() {
+        for t in [
+            "transactions.delete",
+            "rules.delete",
+            "bills.delete",
+            "budget.delete_plan",
+            "jobs.run",
+            "household.update_settings",
+        ] {
+            assert!(owner_only(t), "{t}");
+        }
+        for t in [
+            "transactions.categorize",
+            "bills.cancel",
+            "alerts.ack",
+            "budget.set_plan",
+        ] {
+            assert!(!owner_only(t), "{t}");
         }
     }
 }

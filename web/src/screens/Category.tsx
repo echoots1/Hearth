@@ -8,6 +8,7 @@ import { useCategoryDetail, useGroups, useToday } from "../lib/data";
 import { addMonths, monthLabel, monthShort, ordinal, shortDate } from "../lib/dates";
 import { dollars, money } from "../lib/money";
 import { useMutation } from "../lib/query";
+import { useSession } from "../lib/session";
 import type { CategoryDetail, Today } from "../lib/types";
 import { describe } from "./Budget";
 
@@ -120,6 +121,7 @@ function PlanPhases({ d, today }: { d: CategoryDetail; today: Today }) {
   const current = [...plans].reverse().find((p) => p.starts_month <= today.month);
   const future = plans.filter((p) => p.starts_month > today.month);
   const del = useMutation((plan_id: string) => tool("budget.delete_plan", { plan_id }), ["budget."]);
+  const owner = useSession().me?.role === "owner";
   if (plans.length === 0) return null;
   return (
     <Card className="divider overflow-hidden">
@@ -141,7 +143,7 @@ function PlanPhases({ d, today }: { d: CategoryDetail; today: Today }) {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-muted text-[15px] font-extrabold">{dollars(p.amount_cents)} / mo</span>
-            <button type="button" className="text-muted text-[12px] font-bold underline" onClick={() => del.run(p.id)} disabled={del.busy}>remove</button>
+            {owner && <button type="button" className="text-muted text-[12px] font-bold underline" onClick={() => del.run(p.id)} disabled={del.busy}>remove</button>}
           </div>
         </div>
       ))}

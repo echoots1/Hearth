@@ -6,7 +6,9 @@
 
 mod auth;
 mod chat;
+mod csrf;
 mod error;
+mod headers;
 mod health;
 mod integrations;
 mod keys;
@@ -46,23 +48,39 @@ pub struct AppState {
     pub crypto: Option<Crypto>,
     /// Effective server settings: the app's overrides over the environment.
     runtime: Arc<RwLock<Arc<Runtime>>>,
+    /// Required by `/api/auth/setup` while no account exists; printed to the log.
+    pub setup_token: crate::auth::setup::SetupToken,
 }
 
 impl AppState {
     pub async fn new(config: Config, pool: PgPool) -> anyhow::Result<Self> {
         let h = services::household::ensure(&pool).await?;
-        let crypto = config
-            .app_encryption_key
-            .as_deref()
-            .map(Crypto::from_passphrase);
+        let crypto = match config.app_encryption_key.as_deref() {
+            Some(passphrase) => {
+                let salt = services::secrets::load_or_create_salt(&pool).await?;
+                Some(Crypto::derive(passphrase, &salt)?)
+            }
+            None => None,
+        };
         let stored = services::server::load_from(&pool, h.id).await?;
         let runtime = Runtime::compute(&config, &stored);
+        let setup_token = crate::auth::setup::SetupToken::default();
+        let users: i64 = sqlx::query_scalar("select count(*) from users")
+            .fetch_one(&pool)
+            .await?;
+        if users == 0 {
+            let token = setup_token.issue();
+            tracing::warn!(
+                "no accounts yet. Open the app and enter this setup token to create the owner: {token}"
+            );
+        }
         Ok(Self {
             config: Arc::new(config),
             pool,
             household_id: h.id,
             crypto,
             runtime: Arc::new(RwLock::new(Arc::new(runtime))),
+            setup_token,
         })
     }
 
@@ -112,7 +130,16 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health::health))
         .route("/auth/status", get(auth::status))
-        .route("/auth/setup", post(auth::setup))
+        .route(
+            "/auth/setup",
+            post(auth::setup).layer(axum::middleware::from_fn_with_state(
+                (
+                    state.clone(),
+                    ratelimit::Limiter::new(10, std::time::Duration::from_secs(300)),
+                ),
+                ratelimit::limit,
+            )),
+        )
         .route(
             "/auth/login",
             post(auth::login).layer(axum::middleware::from_fn_with_state(
@@ -172,6 +199,7 @@ pub fn router(state: AppState) -> Router {
         .route("/keys", get(keys::list).post(keys::create))
         .route("/keys/{id}/revoke", post(keys::revoke))
         .route("/users", get(users::list).post(users::create))
+        .route("/users/{id}", axum::routing::delete(users::delete))
         .route("/users/{id}/password", post(users::set_password))
         .route(
             "/settings/assistant",
@@ -187,6 +215,8 @@ pub fn router(state: AppState) -> Router {
         .nest("/api", api)
         .merge(crate::mcp::router(state.clone()))
         .fallback(assets::spa_fallback)
+        // Outermost first: trace, then security headers on every response,
+        // then the same-origin guard for cookie-authenticated writes.
         .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
             tracing::info_span!(
                 "request",
@@ -194,5 +224,10 @@ pub fn router(state: AppState) -> Router {
                 path = %crate::mcp::redact_path(req.uri().path()),
             )
         }))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            headers::security_headers,
+        ))
+        .layer(axum::middleware::from_fn(csrf::same_origin_guard))
         .with_state(state)
 }

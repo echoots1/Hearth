@@ -11,6 +11,7 @@ export function Users() {
   const [add, setAdd] = useState(false);
   const [pw, setPw] = useState<UserInfo | null>(null);
   const owner = me?.role === "owner";
+  const remove = useMutation((id: string) => api.del(`/api/users/${id}`), ["users"]);
   if (!users.data) return <Spinner />;
   return (
     <>
@@ -22,10 +23,16 @@ export function Users() {
               <span className="text-[15px] font-bold">{u.display_name}{u.id === me?.id && <span className="text-muted"> (you)</span>}</span>
               <span className="text-muted text-[12px] font-semibold">{u.email} · {u.role}</span>
             </div>
-            {(owner || u.id === me?.id) && <button type="button" className="chip-light" onClick={() => setPw(u)}>Password</button>}
+            <div className="flex shrink-0 gap-2">
+              {(owner || u.id === me?.id) && <button type="button" className="chip-light" onClick={() => setPw(u)}>Password</button>}
+              {owner && u.id !== me?.id && (
+                <button type="button" className="chip-light text-attention" disabled={remove.busy} onClick={() => { if (window.confirm(`Remove ${u.display_name}? They are signed out everywhere and can no longer sign in.`)) void remove.run(u.id); }}>Remove</button>
+              )}
+            </div>
           </div>
         ))}
       </Card>
+      <ErrorNote error={remove.error} />
       {owner && <button type="button" className="btn-light" onClick={() => setAdd(true)}><Icon name="plus" size={16} /> Add a person</button>}
       <AddUserSheet open={add} onClose={() => setAdd(false)} />
       {pw && <PasswordSheet user={pw} onClose={() => setPw(null)} />}

@@ -160,7 +160,9 @@ async fn owner_contact(ctx: &Ctx) -> anyhow::Result<String> {
 fn alert_message(state: &AppState, a: &Alert, nudge: bool) -> Msg {
     let runtime = state.runtime();
     let base = &runtime.app_url;
-    let exp = Utc::now() + Duration::days(7);
+    // One-tap links are bearer tokens for one alert; a day is plenty, the nag
+    // schedule sends fresh ones.
+    let exp = Utc::now() + Duration::hours(24);
     let ack = format!(
         "{base}/api/n/{}",
         actions::sign(&state.config.app_secret, a.id, Action::Ack, exp)

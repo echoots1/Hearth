@@ -19,10 +19,58 @@ pub struct PushKeys {
     pub auth: String,
 }
 
-pub async fn subscribe(ctx: &Ctx, user_id: Uuid, s: Subscribe) -> Result<PushSubscription> {
-    if !s.endpoint.starts_with("https://") {
-        return Err(invalid("endpoint must be https"));
+/// A push endpoint the notify job may POST to. Browsers hand out `https://`
+/// URLs on public push services; anything that looks like an internal host
+/// (an IP literal, `localhost`, a `.local`/`.lan`/`.internal` name) is refused
+/// so a signed-in person cannot point the server at the home network.
+pub fn validate_endpoint(endpoint: &str) -> std::result::Result<(), String> {
+    let Some(rest) = endpoint.strip_prefix("https://") else {
+        return Err("endpoint must be https".into());
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.contains('@') {
+        return Err("endpoint must not carry credentials".into());
     }
+    let host = authority
+        .strip_prefix('[')
+        .and_then(|h| h.split(']').next())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            authority
+                .rsplit_once(':')
+                .map(|(h, _)| h)
+                .unwrap_or(authority)
+                .to_string()
+        })
+        .to_ascii_lowercase();
+    if host.is_empty() {
+        return Err("endpoint needs a host name".into());
+    }
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Err("endpoint must be a host name, not an address".into());
+    }
+    const PRIVATE_SUFFIXES: &[&str] = &[
+        ".local",
+        ".localhost",
+        ".internal",
+        ".lan",
+        ".home",
+        ".home.arpa",
+        ".corp",
+        ".intranet",
+        ".localdomain",
+    ];
+    if host == "localhost"
+        || !host.contains('.')
+        || PRIVATE_SUFFIXES.iter().any(|s| host.ends_with(s))
+    {
+        return Err("endpoint must be a public push service".into());
+    }
+    Ok(())
+}
+
+pub async fn subscribe(ctx: &Ctx, user_id: Uuid, s: Subscribe) -> Result<PushSubscription> {
+    validate_endpoint(&s.endpoint).map_err(invalid)?;
     Ok(sqlx::query_as::<_, PushSubscription>(
         "insert into push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
          values ($1, $2, $3, $4, $5)
@@ -90,4 +138,39 @@ pub async fn mark_failure(ctx: &Ctx, id: Uuid, gone: bool) -> Result<()> {
             .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_endpoint;
+
+    #[test]
+    fn public_push_services_pass() {
+        for e in [
+            "https://fcm.googleapis.com/fcm/send/abc:APA91b",
+            "https://web.push.apple.com/QGxyz",
+            "https://updates.push.services.mozilla.com/wpush/v2/gAAAA",
+            "https://wns2-bl2p.notify.windows.com/w/?token=AwYAAA",
+        ] {
+            assert!(validate_endpoint(e).is_ok(), "{e}");
+        }
+    }
+
+    #[test]
+    fn internal_targets_are_refused() {
+        for e in [
+            "http://fcm.googleapis.com/x",
+            "https://192.168.1.20/x",
+            "https://[::1]:8443/x",
+            "https://localhost/x",
+            "https://nas/x",
+            "https://nas.local/x",
+            "https://router.lan/x",
+            "https://db.internal:5432/x",
+            "https://user:pw@fcm.googleapis.com/x",
+            "https:///x",
+        ] {
+            assert!(validate_endpoint(e).is_err(), "{e}");
+        }
+    }
 }

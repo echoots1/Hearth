@@ -29,7 +29,7 @@ const guessTz = () => {
 
 export function Setup() {
   const { setMe } = useSession();
-  const [f, setF] = useState({ household_name: "", timezone: guessTz(), email: "", display_name: "", password: "" });
+  const [f, setF] = useState({ setup_token: "", household_name: "", timezone: guessTz(), email: "", display_name: "", password: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: FormEvent) => {
@@ -48,6 +48,9 @@ export function Setup() {
   return (
     <Frame title="Welcome to Hearth" intro="First run: name the household and create the owner account. Everything stays on this server.">
       <form onSubmit={submit} className="flex flex-col gap-3">
+        <Field label="Setup token" hint="Printed in the server log when it starts with no accounts: `docker compose logs app` (TrueNAS: Installed → hearth → Logs), the line that says “setup token”. It proves you run this server.">
+          <input className="field" required value={f.setup_token} onChange={set("setup_token")} autoComplete="off" spellCheck={false} autoFocus />
+        </Field>
         <Field label="Household name"><input className="field" required value={f.household_name} onChange={set("household_name")} placeholder="The Example household" /></Field>
         <Field label="Timezone" hint="IANA name, e.g. America/Chicago. Dates and paydays use it."><input className="field" required value={f.timezone} onChange={set("timezone")} /></Field>
         <Field label="Your name"><input className="field" required value={f.display_name} onChange={set("display_name")} autoComplete="name" /></Field>

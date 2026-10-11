@@ -7,6 +7,7 @@ pub mod extract;
 pub mod passwords;
 pub mod ratelimit;
 pub mod sessions;
+pub mod setup;
 
 /// Cookie that carries the session id.
 pub const SESSION_COOKIE: &str = "hearth_session";

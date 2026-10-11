@@ -348,21 +348,37 @@ attention, blue = income.
 ## 10. Security and privacy — ✓ decided
 
 - **Local auth.** Email + password (argon2id), DB-backed sessions in an
-  httpOnly cookie, owner and member roles; the first visit creates the
-  owner. OIDC is a later option, not v1.
+  httpOnly `SameSite=Lax` cookie, owner and member roles; the first visit
+  creates the owner and must present the **setup token** the server printed
+  to its log, so an instance reachable before setup cannot be claimed by a
+  stranger. Writes from a cookie session are also checked against
+  `Origin`/`Sec-Fetch-Site`. OIDC is a later option, not v1.
+- **Roles.** Members read and tend the budget; only the owner manages
+  people, keys, integrations, server and assistant settings, runs jobs by
+  hand, changes household settings, and deletes bills, rules, plans or
+  transactions.
 - **API keys** for MCP: hashed at rest, shown once, `read` or `read_write`
   scope, revocable, last-used tracked.
 - **Secrets at rest.** Plaid access tokens, the optional Anthropic API key,
-  and VAPID private keys are encrypted with an app key from the environment;
-  rotating it requires a documented re-encrypt step. Nothing secret is ever
+  integration credentials and VAPID private keys are encrypted (AES-256-GCM)
+  with a key derived by argon2id from `APP_ENCRYPTION_KEY` and a per-install
+  salt; rotating it means re-entering the secrets. Nothing secret is ever
   returned by the API or MCP.
 - **Spend control.** API mode has a monthly cap and per-call usage logging;
   the pass job stops when the cap is reached and raises an info alert.
 - **Notification actions** use per-alert signed, expiring tokens, so a tap
   on a push button acknowledges without a login prompt and can't be replayed
   against another alert.
-- **Rate limits** on login and `/mcp`. Reverse-proxy headers trusted only
-  when configured.
+- **Rate limits** on login, setup and `/mcp`. Reverse-proxy headers trusted
+  only when configured, and then only the last `X-Forwarded-For` hop.
+- **Browser hardening.** Every response carries a strict Content Security
+  Policy (self, plus Plaid Link's CDN), `frame-ancestors 'none'`, `nosniff`,
+  `Referrer-Policy: no-referrer` and, over https, HSTS.
+- **Untrusted text.** Descriptions, memos, notes and imported cells are data
+  the assistant must not take instructions from; the MCP instructions say
+  so, and delete tools always become proposals whatever the autonomy
+  position. Push endpoints must be public push services, and Plaid webhooks
+  must carry Plaid's signature.
 - **Audit everything.** Every write records the actor (user, API key, job,
   assistant), before and after. The assistant's actions are additionally
   listed in Activity with Undo.

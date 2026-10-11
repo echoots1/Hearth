@@ -49,14 +49,11 @@ impl Limiter {
     }
 }
 
-/// The client address: the first `X-Forwarded-For` hop when `TRUST_PROXY`
-/// is on, otherwise the socket peer.
+/// The client address: the hop the trusted proxy appended to
+/// `X-Forwarded-For` when `TRUST_PROXY` is on, otherwise the socket peer.
 pub fn client_ip(state: &AppState, req: &Request) -> IpAddr {
     if state.runtime().trust_proxy
-        && let Some(v) = req.headers().get("x-forwarded-for")
-        && let Ok(s) = v.to_str()
-        && let Some(first) = s.split(',').next()
-        && let Ok(ip) = first.trim().parse::<IpAddr>()
+        && let Some(ip) = forwarded_client(req.headers().get("x-forwarded-for"))
     {
         return ip;
     }
@@ -64,6 +61,22 @@ pub fn client_ip(state: &AppState, req: &Request) -> IpAddr {
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0.ip())
         .unwrap_or(IpAddr::from([0, 0, 0, 0]))
+}
+
+/// The **last** `X-Forwarded-For` entry. A proxy appends the address it saw
+/// to whatever the client sent, so only the last hop is the proxy's word;
+/// everything before it is attacker-controlled and would let one client
+/// spoof a fresh rate-limit bucket per request.
+pub fn forwarded_client(header: Option<&HeaderValue>) -> Option<IpAddr> {
+    header?
+        .to_str()
+        .ok()?
+        .rsplit(',')
+        .next()?
+        .trim()
+        .trim_matches('"')
+        .parse()
+        .ok()
 }
 
 /// Middleware: `State((AppState, Limiter))`.
@@ -106,5 +119,29 @@ mod tests {
         let other: IpAddr = "10.0.0.2".parse().unwrap();
         assert!(l.check(other, t0).is_ok());
         assert!(l.check(ip, t0 + Duration::from_secs(61)).is_ok());
+    }
+
+    #[test]
+    fn forwarded_for_takes_the_proxy_appended_hop() {
+        let h = HeaderValue::from_static("1.2.3.4, 10.0.0.9");
+        assert_eq!(
+            forwarded_client(Some(&h)),
+            Some("10.0.0.9".parse::<IpAddr>().unwrap())
+        );
+        let spoofed = HeaderValue::from_static("203.0.113.7,2001:db8::1");
+        assert_eq!(
+            forwarded_client(Some(&spoofed)),
+            Some("2001:db8::1".parse::<IpAddr>().unwrap())
+        );
+        let single = HeaderValue::from_static("192.0.2.1");
+        assert_eq!(
+            forwarded_client(Some(&single)),
+            Some("192.0.2.1".parse::<IpAddr>().unwrap())
+        );
+        assert_eq!(
+            forwarded_client(Some(&HeaderValue::from_static("junk"))),
+            None
+        );
+        assert_eq!(forwarded_client(None), None);
     }
 }

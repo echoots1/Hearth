@@ -31,7 +31,13 @@ async fn view(state: &AppState, settings: &ServerSettings) -> Result<Value, ApiE
     }))
 }
 
-pub async fn get(State(state): State<AppState>, _u: AuthUser) -> Result<Json<Value>, ApiError> {
+/// Owner only: the view names environment values and the data directory.
+pub async fn get(State(state): State<AppState>, u: AuthUser) -> Result<Json<Value>, ApiError> {
+    if !u.is_owner() {
+        return Err(ApiError::forbidden(
+            "only the owner can see the server settings",
+        ));
+    }
     let ctx = state.ctx().await?;
     let settings = server::load(&ctx).await?;
     Ok(Json(view(&state, &settings).await?))

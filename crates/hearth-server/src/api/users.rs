@@ -128,6 +128,62 @@ pub async fn set_password(
     Ok(Json(json!({ "ok": true, "signed_out": true })))
 }
 
+/// The owner removes a person: their sessions and push subscriptions go with
+/// them (cascade); things they created stay, with the author cleared. Not
+/// yourself, and never the last owner.
+pub async fn delete(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    if !user.is_owner() {
+        return Err(ApiError::forbidden("only the owner can remove people"));
+    }
+    if id == user.0.id {
+        return Err(ApiError::bad_request(
+            "you cannot remove yourself; have another owner do it",
+        ));
+    }
+    let target =
+        sqlx::query_as::<_, User>("select * from users where id = $1 and household_id = $2")
+            .bind(id)
+            .bind(state.household_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(ApiError::not_found)?;
+    if target.role == UserRole::Owner {
+        let owners: i64 = sqlx::query_scalar(
+            "select count(*) from users where household_id = $1 and role = 'owner'",
+        )
+        .bind(state.household_id)
+        .fetch_one(&state.pool)
+        .await?;
+        if owners <= 1 {
+            return Err(ApiError::bad_request(
+                "the household needs at least one owner",
+            ));
+        }
+    }
+    sqlx::query("delete from users where id = $1 and household_id = $2")
+        .bind(id)
+        .bind(state.household_id)
+        .execute(&state.pool)
+        .await?;
+    let ctx = state.ctx().await?;
+    services::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        &user.actor(),
+        "user.delete",
+        "users",
+        id,
+        Some(&json!({ "email": target.email, "role": target.role })),
+        None::<&()>,
+    )
+    .await?;
+    Ok(Json(json!({ "removed": true })))
+}
+
 /// The assistant setting (mode, autonomy, models, cap) plus whether an API key is stored and this month's spend.
 pub async fn assistant_settings(
     State(state): State<AppState>,

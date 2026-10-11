@@ -2,6 +2,7 @@ import { Card, ErrorNote, PageHeader, Spinner } from "../../components/ui";
 import { tool } from "../../lib/api";
 import { ago } from "../../lib/dates";
 import { useMutation, useQuery } from "../../lib/query";
+import { useSession } from "../../lib/session";
 
 type JobRun = { id: string; status: string; started_at: string; finished_at: string | null; summary: Record<string, unknown> | null; error: string | null; triggered_by: string };
 type JobStatus = { job: string; description: string; every_seconds: number; last_run: JobRun | null; due: boolean };
@@ -13,6 +14,8 @@ function every(s: number) {
 }
 
 export function Jobs() {
+  const { me } = useSession();
+  const owner = me?.role === "owner";
   const jobs = useQuery<JobStatus[]>("jobs.status", () => tool("jobs.status"));
   const run = useMutation((name: string) => tool("jobs.run", { name }), ["jobs.", "alerts.", "transactions.", "budget.", "balance."]);
   if (!jobs.data) return <Spinner />;
@@ -26,7 +29,7 @@ export function Jobs() {
               <span className="text-[15px] font-bold"><code>{j.job}</code> <span className="text-muted text-[12px] font-semibold">{every(j.every_seconds)}</span></span>
               <span className="text-muted text-[12px] font-semibold">{j.description}</span>
             </div>
-            <button type="button" className="chip-light shrink-0" disabled={run.busy} onClick={() => run.run(j.job)}>Run now</button>
+            {owner && <button type="button" className="chip-light shrink-0" disabled={run.busy} onClick={() => run.run(j.job)}>Run now</button>}
           </div>
           {j.last_run ? (
             <div className={`text-[12px] font-semibold ${j.last_run.status === "failed" ? "text-attention" : "text-muted"}`}>
