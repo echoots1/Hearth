@@ -193,6 +193,19 @@ mod sqlx_impl {
     }
 }
 
+#[cfg(feature = "schemars")]
+impl schemars::JsonSchema for Cents {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Cents".into()
+    }
+    fn inline_schema() -> bool {
+        true
+    }
+    fn json_schema(_g: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "type": "integer", "format": "int64", "description": "Money in integer cents; negative = out." })
+    }
+}
+
 impl From<i64> for Cents {
     fn from(v: i64) -> Self {
         Cents(v)

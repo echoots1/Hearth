@@ -56,12 +56,6 @@ impl ApiCaller {
         }
     }
 
-    pub fn household_id(&self) -> uuid::Uuid {
-        match self {
-            ApiCaller::User(u) => u.household_id,
-            ApiCaller::Key(k) => k.household_id,
-        }
-    }
 }
 
 pub struct AuthRejection(StatusCode, &'static str);

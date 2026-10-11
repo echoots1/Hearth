@@ -11,6 +11,7 @@ rust-version.workspace = true
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 regex = "1"
+schemars = { version = "1", optional = true }
 serde = { workspace = true }
 serde_json = "1"
 sha2 = "0.10"
@@ -21,6 +22,7 @@ uuid = { workspace = true }
 [features]
 default = []
 sqlx = ["dep:sqlx"]
+schemars = ["dep:schemars"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

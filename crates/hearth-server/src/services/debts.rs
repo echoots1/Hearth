@@ -259,3 +259,95 @@ pub async fn previous_balance(ctx: &Ctx, debt_id: Uuid) -> Result<Option<Cents>>
     .await?;
     Ok(row.map(|r| r.0))
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StrategyComparison {
+    pub current: hearth_core::settings::DebtStrategyKind,
+    pub avalanche: Projection,
+    pub snowball: Projection,
+    pub custom: Projection,
+}
+
+/// Payoff under each strategy with the same extra payment, side by side.
+pub async fn compare(ctx: &Ctx) -> Result<StrategyComparison> {
+    use hearth_core::settings::{DebtStrategy, DebtStrategyKind};
+    let settings = super::settings::load(ctx).await?;
+    let inputs: Vec<DebtInput> = list(ctx, false).await?.iter().map(to_input).collect();
+    let month = ctx.month();
+    let with = |kind: DebtStrategyKind| DebtStrategy {
+        kind,
+        ..settings.debt_strategy.clone()
+    };
+    Ok(StrategyComparison {
+        current: settings.debt_strategy.kind,
+        avalanche: debts::project(&inputs, &with(DebtStrategyKind::Avalanche), month),
+        snowball: debts::project(&inputs, &with(DebtStrategyKind::Snowball), month),
+        custom: debts::project(&inputs, &with(DebtStrategyKind::Custom), month),
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WhatIf {
+    pub debt_id: Uuid,
+    pub charge: Option<DelayCost>,
+    /// Projection with the extra monthly amount applied, and the baseline.
+    pub extra_monthly_cents: Option<Cents>,
+    pub baseline: Projection,
+    pub with_extra: Option<Projection>,
+    /// Months sooner (positive) and interest saved with the extra payment.
+    pub months_sooner: Option<i32>,
+    pub interest_saved_cents: Option<Cents>,
+}
+
+/// What a one-time charge or an extra monthly payment does.
+pub async fn what_if(
+    ctx: &Ctx,
+    debt_id: Uuid,
+    charge: Option<Cents>,
+    extra_monthly: Option<Cents>,
+) -> Result<WhatIf> {
+    get(ctx, debt_id).await?;
+    let settings = super::settings::load(ctx).await?;
+    let inputs: Vec<DebtInput> = list(ctx, false).await?.iter().map(to_input).collect();
+    let month = ctx.month();
+    let baseline = debts::project(&inputs, &settings.debt_strategy, month);
+    let charge_delta = match charge {
+        Some(c) if c.0 > 0 => {
+            debts::delay_cost(&inputs, &settings.debt_strategy, month, debt_id, c)
+        }
+        _ => None,
+    };
+    let (with_extra, months_sooner, interest_saved) = match extra_monthly {
+        Some(e) if e.0 > 0 => {
+            let mut s = settings.debt_strategy.clone();
+            s.extra_payment_cents += e;
+            let p = debts::project(&inputs, &s, month);
+            let sooner = match (baseline.debt_free_month, p.debt_free_month) {
+                (Some(b), Some(a)) => Some(a.months_until(b)),
+                _ => None,
+            };
+            let saved = baseline.total_interest_cents - p.total_interest_cents;
+            (Some(p), sooner, Some(saved))
+        }
+        _ => (None, None, None),
+    };
+    Ok(WhatIf {
+        debt_id,
+        charge: charge_delta,
+        extra_monthly_cents: extra_monthly,
+        baseline,
+        with_extra,
+        months_sooner,
+        interest_saved_cents: interest_saved,
+    })
+}
+
+/// Set the household strategy (kind, custom order, extra payment).
+pub async fn set_strategy(
+    ctx: &Ctx,
+    actor: &Actor,
+    strategy: hearth_core::settings::DebtStrategy,
+) -> Result<serde_json::Value> {
+    let v = serde_json::to_value(&strategy).map_err(anyhow::Error::from)?;
+    super::settings::set(ctx, actor, "debt_strategy", v).await
+}
