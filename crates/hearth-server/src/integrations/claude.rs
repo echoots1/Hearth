@@ -46,7 +46,8 @@ impl Claude {
     pub fn new(api_key: String) -> anyhow::Result<Claude> {
         Ok(Claude {
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(180))
+                // Long enough for an Opus-tier model to fill a 16k-token response.
+                .timeout(std::time::Duration::from_secs(600))
                 .build()?,
             api_key,
         })
