@@ -28,6 +28,7 @@ use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+use crate::auth::ratelimit;
 use crate::services::secrets::Crypto;
 use crate::services::{self, Ctx};
 use crate::{assets, config::Config};
@@ -81,7 +82,16 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health::health))
         .route("/auth/status", get(auth::status))
         .route("/auth/setup", post(auth::setup))
-        .route("/auth/login", post(auth::login))
+        .route(
+            "/auth/login",
+            post(auth::login).layer(axum::middleware::from_fn_with_state(
+                (
+                    state.clone(),
+                    ratelimit::Limiter::new(10, std::time::Duration::from_secs(300)),
+                ),
+                ratelimit::limit,
+            )),
+        )
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
         .route("/tools", get(tools::list))

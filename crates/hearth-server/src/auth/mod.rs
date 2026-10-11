@@ -5,6 +5,7 @@ pub mod actions;
 pub mod api_keys;
 pub mod extract;
 pub mod passwords;
+pub mod ratelimit;
 pub mod sessions;
 
 /// Cookie that carries the session id.

@@ -245,10 +245,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         Arc::new(LocalSessionManager::default()),
         config,
     );
+    let limiter = crate::auth::ratelimit::Limiter::new(300, std::time::Duration::from_secs(60));
     Router::new()
         .route_service("/mcp", service.clone())
         .route_service("/mcp/{key}", service)
-        .layer(middleware::from_fn_with_state(state, require_key))
+        .layer(middleware::from_fn_with_state(state.clone(), require_key))
+        .layer(middleware::from_fn_with_state(
+            (state, limiter),
+            crate::auth::ratelimit::limit,
+        ))
 }
 
 #[cfg(test)]
