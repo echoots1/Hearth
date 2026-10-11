@@ -5,7 +5,7 @@
 > Status: **draft for review, section by section.** A section is decided when
 > its header says `✓ decided`. Until then it is a proposal.
 
-## 1. What Hearth is for — proposed
+## 1. What Hearth is for — ✓ decided
 
 Hearth is a self-hosted budget for one household. It keeps the family on a
 monthly plan, keeps an honest running estimate of cash, and tells you how low
@@ -32,7 +32,7 @@ receipt scanner, or (in v1) an investment tracker or market data consumer. It ru
 family's own reverse proxy, and nothing about the household leaves that box
 except what the integrations the family turns on need.
 
-## 2. Core concepts — proposed
+## 2. Core concepts — ✓ decided
 
 Eleven nouns. Everything on screen and every MCP tool is made of these.
 
@@ -56,7 +56,7 @@ sinking-fund should-have, debt projections and strategy comparisons, goal
 projections, each bill's next due date after a match. Later phase: net worth
 series from account and debt balance snapshots.
 
-## 3. How a day works — proposed
+## 3. How a day works — ✓ decided
 
 1. **Sync** jobs pull new transactions from each configured source (Plaid,
    Privacy.com) on an interval; CSV import and manual entry add the rest.
@@ -238,7 +238,7 @@ institutions or people; seed data is obviously fake.
 | 5 | Where the AI's "can we buy" answer is logged | As a question with the answer recorded, so it's auditable. |
 | 6 | Is a category's plan set by hand, or derived from its bills? | **Decided:** the plan is a number you (or the AI) set and can edit at any time; the app shows "bills in this category total $X" and the AI may raise it when a new bill exceeds it. Never silently lowers it. |
 | 7 | One bill → one category, or can a bill split? | **Decided:** one category by default; a bill can be split across categories only when a person asks for it (by chat or in the form), never on the assistant's own initiative. |
-| 8 | Do yearly bills live in a category too? | Yes: they post to their category in the month they hit; the set-aside shows as the Sinking fund row. |
+| 8 | Do yearly bills live in a category too? | **Decided:** yes. A yearly/quarterly bill posts to its category in the month it hits; the saving for all of them shows as one "Sinking fund" row on the Budget, with the per-bill breakdown on the Plan tab. |
 | 9 | Who suggests, who acts? | **Decided:** the app computes every option's numbers; the assistant recommends. Whether it may also *apply* a change is the Backseat / Driver setting in §8, per area, default Driver for categorizing and notes, Backseat for plans, bills, and strategy. |
 | 11 | Undo | Proposed: changes made by the assistant in Driver mode get an Undo in Activity for categorize, note, plan amount, and strategy; adding a bill is reversed by canceling it. Undo is a new audited write, not a rollback. |
 | 10 | Wealth building scope | Phase 2: net worth from balance snapshots, investment accounts with manually reported balances, contribution tracking. No brokerage sync or market data in scope yet. |
