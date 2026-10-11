@@ -318,10 +318,16 @@ reminds you of that in Pull mode.
   Hearth generates its own VAPID keys; no Firebase, no app store.
   Notifications carry **Acknowledge** and **Snooze** buttons that work
   without signing in (signed, expiring links).
-- **ntfy.** Set `NTFY_TOPIC` (and `NTFY_URL` for a self-hosted server,
-  `NTFY_TOKEN` if it needs one).
-- **Email.** Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
-  `SMTP_FROM`, `ALERT_EMAIL_TO`.
+- **ntfy.** **More → Notifications → ntfy**: server (ntfy.sh or your own),
+  topic, and an access token if the topic is protected. **Send a test**
+  confirms it.
+- **Email.** **More → Notifications → Email**: SMTP host, port, username,
+  password, from address and where alerts go. **Send a test email**
+  confirms it.
+
+Both are owner-only and stored encrypted in the database. The matching
+environment variables (`NTFY_*`, `SMTP_*`, `ALERT_EMAIL_TO`) still work as a
+fallback and show as "from environment"; saving in the app overrides them.
 
 Quiet hours and the nag schedule live under **More → Settings**; a critical
 alert can override quiet hours.
@@ -332,14 +338,20 @@ alert can override quiet hours.
   account, upload the bank's export, map the columns once (save them as a
   preset), preview, import. Duplicates are skipped; every import can be
   rolled back.
-- **Plaid.** Set `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`
-  (`sandbox` or `production`) and restart. **More → Integrations → Link a
-  bank** opens Plaid Link (its script loads from Plaid's CDN only when you tap
-  the button). Transactions and balances sync every `PLAID_SYNC_MINUTES`.
-- **Privacy.com.** Set `PRIVACY_API_KEY` and `PRIVACY_ENV`. Cards become
-  accounts, charges sync every `PRIVACY_SYNC_MINUTES`, declines become alerts,
-  and the bank's later line for a card charge is linked so cash isn't counted
-  twice.
+- **Plaid.** **More → Integrations → Bank feeds**: paste the client ID and
+  secret from the Plaid dashboard, pick sandbox or production, **Save**, then
+  **Check the keys**. **Link a bank** opens Plaid Link (its script loads from
+  Plaid's CDN only when you tap the button). Transactions and balances sync
+  every `PLAID_SYNC_MINUTES`.
+- **Privacy.com.** **More → Integrations → Virtual cards**: paste the API key,
+  **Save**, **Check the key**. Cards become accounts, charges sync every
+  `PRIVACY_SYNC_MINUTES`, declines become alerts, and the bank's later line for
+  a card charge is linked so cash isn't counted twice.
+
+Both are owner-only and stored encrypted (so `APP_ENCRYPTION_KEY` must be
+set). The `PLAID_*` and `PRIVACY_*` environment variables still work as a
+fallback; the app's copy wins when both exist, and **Remove** goes back to
+the environment.
 
 ## 5. API mode (optional, you pay Anthropic)
 
@@ -390,7 +402,7 @@ off for the optional sections.
 | `PORT` | `3000` | Host port Compose publishes. The container always listens on 3000. |
 | `HEARTH_TAG` | `main` | Image tag Compose pulls: `main`, `latest`, `sha-<short>`, or a version once there are releases. |
 | `APP_SECRET` | required | 32+ random characters. Signs sessions and one-tap notification links. Changing it signs everyone out. |
-| `APP_ENCRYPTION_KEY` | blank | 32+ random characters. Encrypts Plaid tokens, the push keys and the optional Anthropic key at rest. Required for Plaid, push and API mode; changing it means re-linking. |
+| `APP_ENCRYPTION_KEY` | blank | 32+ random characters. Encrypts everything secret at rest: integration keys saved in the app, Plaid tokens, the push keys, the Anthropic key. Required for any of those; changing it means re-entering them. |
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits). `true` behind a reverse proxy. |
 | `MCP_ALLOWED_HOSTS` | host of `APP_URL` + localhost | Comma-separated `Host` values the MCP endpoint accepts. Only needed when Hearth is reached under a name that isn't in `APP_URL`. |
 | `LOG_LEVEL` | `info,sqlx=warn` | Tracing filter. |
@@ -414,7 +426,12 @@ off for the optional sections.
 | `PLAID_SYNC_MINUTES` | `60` | Plaid transaction sync interval. |
 | `PRIVACY_SYNC_MINUTES` | `10` | Privacy.com sync interval. |
 
-**Integrations (all optional)**
+**Integrations (all optional, and all configurable in the app instead)**
+
+Every variable here can be left unset and entered under **More →
+Integrations** or **More → Notifications**, where it is stored encrypted.
+The environment is a fallback for people who prefer it; a value saved in the
+app takes precedence.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

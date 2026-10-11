@@ -17,6 +17,8 @@ struct Channels {
     client: reqwest::Client,
     vapid: Option<webpush::Vapid>,
     push_subs: Vec<crate::db::models::PushSubscription>,
+    ntfy: Option<crate::config::NtfyConfig>,
+    smtp: Option<crate::config::SmtpConfig>,
 }
 
 struct Msg {
@@ -49,9 +51,15 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
             .build()?,
         vapid,
         push_subs,
+        ntfy: services::integrations::ntfy(&ctx, &state.config)
+            .await?
+            .map(|(c, _)| c),
+        smtp: services::integrations::smtp(&ctx, &state.config)
+            .await?
+            .map(|(c, _)| c),
     };
     let any_channel =
-        channels.vapid.is_some() || state.config.ntfy.is_some() || state.config.smtp.is_some();
+        channels.vapid.is_some() || channels.ntfy.is_some() || channels.smtp.is_some();
     if !any_channel {
         return Ok(json!({ "skipped": "no channel configured and no device subscribed" }));
     }
@@ -69,7 +77,7 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
             continue;
         }
         let m = alert_message(&state, &a, false);
-        let (ok, bad) = deliver(&state, &ctx, &channels, &m, Some(a.id), None, "initial").await;
+        let (ok, bad) = deliver(&ctx, &channels, &m, Some(a.id), None, "initial").await;
         sent += ok;
         failed += bad;
         if ok > 0 {
@@ -98,7 +106,7 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
             continue;
         }
         let m = alert_message(&state, &a, true);
-        let (ok, bad) = deliver(&state, &ctx, &channels, &m, Some(a.id), None, "nudge").await;
+        let (ok, bad) = deliver(&ctx, &channels, &m, Some(a.id), None, "nudge").await;
         sent += ok;
         failed += bad;
         if ok > 0 {
@@ -118,7 +126,7 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
         } else {
             "question"
         };
-        let (ok, bad) = deliver(&state, &ctx, &channels, &m, None, Some(q.id), kind).await;
+        let (ok, bad) = deliver(&ctx, &channels, &m, None, Some(q.id), kind).await;
         sent += ok;
         failed += bad;
     }
@@ -203,7 +211,6 @@ fn question_message(state: &AppState, q: &Question) -> Msg {
 
 /// Send one message over every channel; returns (successes, failures).
 async fn deliver(
-    state: &AppState,
     ctx: &Ctx,
     ch: &Channels,
     m: &Msg,
@@ -301,7 +308,7 @@ async fn deliver(
         }
     }
 
-    if let Some(cfg) = &state.config.ntfy {
+    if let Some(cfg) = &ch.ntfy {
         let actions: Vec<(&str, &str)> =
             m.actions.iter().map(|(_, l, u)| (*l, u.as_str())).collect();
         let msg = ntfy::Message {
@@ -346,7 +353,7 @@ async fn deliver(
         }
     }
 
-    if let Some(cfg) = &state.config.smtp {
+    if let Some(cfg) = &ch.smtp {
         let mut body = format!("{}\n\nOpen Hearth: {}\n", m.body, m.url);
         for (_, label, url) in &m.actions {
             body.push_str(&format!("{label}: {url}\n"));

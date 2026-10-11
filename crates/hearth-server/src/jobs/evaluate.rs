@@ -204,7 +204,10 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
         last_error,
     })
     .collect();
-    if state.config.privacy.is_some() {
+    if services::integrations::privacy(&ctx, &state.config)
+        .await?
+        .is_some()
+    {
         let runs: Vec<(String, Option<String>)> = sqlx::query_as(
             "select status::text, error from job_runs where job = 'sync:privacy' and status in ('ok','failed') order by started_at desc limit 10",
         )
