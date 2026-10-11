@@ -6,19 +6,24 @@ name: Image
 # Two channels:
 #   development  ghcr.io/<owner>/hearth:main        a push to main that changes the app
 #                ghcr.io/<owner>/hearth:sha-<short> the same push, pinned
-#   release      ghcr.io/<owner>/hearth:<version>   a v* tag (scripts/release.sh)
+#   release      ghcr.io/<owner>/hearth:<version>   a release (below)
 #                ghcr.io/<owner>/hearth:<major.minor>
 #                ghcr.io/<owner>/hearth:latest      moves only with a release
 #
 # Production installs follow `latest` (the compose files default to it), so a
-# merge to main never reaches them until someone cuts a release. A v* tag
-# also gets a GitHub Release with generated notes.
+# merge to main never reaches them until someone cuts a release.
 #
-# Only what ends up in the image triggers a build: the Rust and web sources,
-# the Cargo manifests, the Dockerfile and this workflow. Docs, compose files,
-# scripts and the rest of .github do not. A newer push to main cancels a
-# build still running for an older one. Tags always build (path filters do
-# not apply to tag pushes), and "Run workflow" builds on demand.
+# Cutting a release, either way:
+#   - Actions → Image → "Run workflow" on main with `release` = X.Y.Z (what an
+#     agent does: `gh workflow run image.yml -f release=X.Y.Z`). The run checks
+#     that Cargo.toml and web/package.json carry that version, creates and
+#     pushes the vX.Y.Z tag itself, builds, and publishes the GitHub Release.
+#   - Or push the tag by hand: `scripts/release.sh X.Y.Z`. The tag push runs
+#     the same jobs.
+# Only what ends up in the image triggers a development build: the Rust and
+# web sources, the Cargo manifests, the Dockerfile and this workflow. A newer
+# push to main cancels a build still running for an older one; a release run
+# has its own group and is never cancelled by a development build.
 
 on:
   push:
@@ -33,18 +38,81 @@ on:
       - ".github/workflows/image.yml"
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Version to release (X.Y.Z, must match Cargo.toml and web/package.json). Leave empty for a development build of main."
+        required: false
+        type: string
 
 concurrency:
-  group: image-${{ github.ref }}
-  cancel-in-progress: true
+  group: image-${{ inputs.release && format('release-{0}', inputs.release) || github.ref }}
+  cancel-in-progress: ${{ !inputs.release && !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
   packages: write
 
 jobs:
+  prepare:
+    name: Decide what this run publishes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to push the release tag on a dispatched release
+    outputs:
+      is_release: ${{ steps.decide.outputs.is_release }}
+      version: ${{ steps.decide.outputs.version }}
+      minor: ${{ steps.decide.outputs.minor }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide
+        id: decide
+        env:
+          REQUESTED: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          cargo_v="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
+          npm_v="$(python3 -c 'import json; print(json.load(open("web/package.json"))["version"])')"
+          version=""
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            [[ "$cargo_v" == "$version" && "$npm_v" == "$version" ]] \
+              || { echo "::error::tag ${GITHUB_REF_NAME} but Cargo.toml says $cargo_v and web/package.json says $npm_v"; exit 1; }
+          elif [[ -n "$REQUESTED" ]]; then
+            [[ "${GITHUB_REF}" == "refs/heads/main" ]] \
+              || { echo "::error::releases are cut from main, not ${GITHUB_REF_NAME}"; exit 1; }
+            version="${REQUESTED#v}"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+              || { echo "::error::'$REQUESTED' is not X.Y.Z"; exit 1; }
+            [[ "$cargo_v" == "$version" && "$npm_v" == "$version" ]] \
+              || { echo "::error::Cargo.toml says $cargo_v and web/package.json says $npm_v; merge the bump to $version first"; exit 1; }
+            if git ls-remote --exit-code --tags origin "v$version" >/dev/null 2>&1; then
+              echo "::error::tag v$version already exists; a release is built once"; exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "v$version" -m "Hearth v$version"
+            git push origin "v$version"
+            echo "tagged v$version at $(git rev-parse --short HEAD)"
+          fi
+          if [[ -n "$version" ]]; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "version=none" >> "$GITHUB_OUTPUT"
+            echo "minor=none" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -84,6 +152,7 @@ jobs:
             org.opencontainers.image.description=Household money, on plan.
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.is_release == 'true' && needs.prepare.outputs.version || github.sha }}
             org.opencontainers.image.licenses=MIT
           outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
           # Keep the manifest list to the two real platforms (no unknown/unknown attestation entries).
@@ -107,7 +176,7 @@ jobs:
 
   publish:
     name: Publish manifest
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -134,12 +203,13 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=ref,event=branch
+            # development: the branch name (`main`) and the commit
+            type=ref,event=branch,enable=${{ needs.prepare.outputs.is_release != 'true' }}
             type=sha,prefix=sha-
-            # `latest` is the release channel: only a v* tag moves it.
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            # release: the version, its major.minor, and `latest`
+            type=raw,value=${{ needs.prepare.outputs.version }},enable=${{ needs.prepare.outputs.is_release == 'true' }}
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ needs.prepare.outputs.is_release == 'true' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_release == 'true' }}
 
       - name: Create the multi-arch manifest
         working-directory: /tmp/digests
@@ -153,8 +223,8 @@ jobs:
 
   release:
     name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: publish
+    if: needs.prepare.outputs.is_release == 'true'
+    needs: [prepare, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -164,7 +234,7 @@ jobs:
       - name: Create the release with generated notes
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.prepare.outputs.tag }}
           OWNER: ${{ github.repository_owner }}
         run: |
           image="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/hearth"
@@ -174,4 +244,3 @@ jobs:
           fi
           gh release create "$TAG" --verify-tag --generate-notes --title "Hearth $TAG" \
             --notes "Image: \`$image:${TAG#v}\` (also \`$image:latest\`). Update: \`docker compose pull && docker compose up -d\`, or Edit → Save on TrueNAS. Back up first; migrations are forward-only."
-

@@ -18,5 +18,8 @@ Thanks for helping. Hearth is small on purpose; keep it that way.
 - **Branches and releases:** work happens on `main` through PRs; `main`
   always builds and publishes the `:main` development image. Production
   follows `:latest`, which moves only when a version is tagged: bump the
-  version in `Cargo.toml` and `web/package.json` in a PR, merge it, then run
-  `scripts/release.sh X.Y.Z`. `CLAUDE.md` has the full checklist.
+  version in `Cargo.toml` and `web/package.json` in a PR, merge it, then
+  either run the Image workflow on `main` with `release` = `X.Y.Z` (Actions
+  → Image → Run workflow, or `gh workflow run image.yml -f release=X.Y.Z`)
+  or push the tag with `scripts/release.sh X.Y.Z`. `CLAUDE.md` has the
+  full checklist.

@@ -27,11 +27,20 @@ let Claude tend it over MCP. `docs/ARCHITECTURE.md` is the design;
   1. PR that bumps the version in **both** `Cargo.toml`
      (`[workspace.package] version`) and `web/package.json`, plus a line in
      the PR about what the release contains. Merge it green.
-  2. On an up-to-date `main`: `scripts/release.sh X.Y.Z`. It verifies the
-     tree, the version match and (with `gh`) CI, then pushes the annotated
-     tag. The Image workflow builds `:X.Y.Z`, `:X.Y`, `:latest` and
-     creates the GitHub Release with generated notes.
-  3. Watch the Image run finish; then tell the person the version is live.
+  2. Dispatch the Image workflow on `main` with the version: from a cloud
+     session use the GitHub tool `actions_run_trigger` (workflow
+     `image.yml`, ref `main`, inputs `{"release": "X.Y.Z"}`); from a
+     terminal `gh workflow run image.yml --ref main -f release=X.Y.Z`; or
+     Actions → Image → Run workflow in the browser. The run checks the
+     version against both manifests, creates and pushes the `vX.Y.Z` tag
+     itself, builds `:X.Y.Z`, `:X.Y` and `:latest`, and publishes the
+     GitHub Release with generated notes. A person with push rights can
+     instead run `scripts/release.sh X.Y.Z`, which pushes the tag by hand
+     and triggers the same jobs. (Cloud sessions cannot push tags: their
+     credentials are scoped to one branch, which is why the dispatch path
+     exists.)
+  3. Watch the Image run finish (`actions_list`, then the jobs); then tell
+     the person the version is live and link the release.
   A migration in the release means the notes should say "back up first":
   migrations are forward-only.
 - **Dependabot** proposes patch updates for Cargo (0.x minors are breaking),
