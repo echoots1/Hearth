@@ -406,9 +406,12 @@ alert can override quiet hours.
   Plaid's CDN only when you tap the button). Transactions and balances sync
   every `PLAID_SYNC_MINUTES`.
 - **Privacy.com.** **More → Integrations → Virtual cards**: paste the API key,
-  **Save**, **Check the key**. Cards become accounts, charges sync every
-  `PRIVACY_SYNC_MINUTES`, declines become alerts, and the bank's later line for
-  a card charge is linked so cash isn't counted twice.
+  pick the **funding account** (the bank account your cards draw from; left
+  blank, your only checking account), **Save**, **Check the key**. Charges
+  post to that account the moment a card is used and sync every
+  `PRIVACY_SYNC_MINUTES`; the bank's own `PwP*…` line for each charge is
+  paired with it when it arrives, so nothing is counted twice. Declines
+  become alerts. Cards are not accounts.
 
 Both are owner-only and stored encrypted (so `APP_ENCRYPTION_KEY` must be
 set). The `PLAID_*` and `PRIVACY_*` environment variables still work as a

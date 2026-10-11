@@ -103,9 +103,12 @@ All optional, all behind environment variables; absent config = disabled.
 - **Plaid** (developer tier): Link flow, `/transactions/sync` with cursors,
   balances treated as possibly stale and always labeled by age. Access
   tokens encrypted at rest.
-- **Privacy.com**: virtual cards as accounts, transactions and declines
-  (declines become alerts, not transactions). Bank-feed duplicates of card
-  charges are linked as shadows so the budget counts each charge once.
+- **Privacy.com**: instant card charges and declines (declines become
+  alerts, not transactions). Cards are not accounts: a charge is a pending
+  transaction on the **funding account** (the bank account Privacy draws
+  from) the moment it happens, and the bank's own `PwP*…` line for it, a few
+  days later, is paired as the card row's shadow so the budget and the cash
+  estimate count each charge once.
 - **CSV import**: column mapping with saved presets, fingerprint dedup,
   per-import rollback.
 - **Manual entry** in the UI and by chat.
@@ -196,7 +199,7 @@ household timezone; months `YYYY-MM`; instants `timestamptz`; uuid keys;
 | `assistant_actions` | tool, args, before, after, undo (tool + args), undone_at, actor key | the "Claude did…" feed with Undo |
 | `push_subscriptions` | user, endpoint, keys, user agent, last success | Web Push targets |
 | `notifications` | alert or question, channel (webpush/ntfy/smtp), kind, status, external id, error | delivery log |
-| `import_batches`, `card_events` | mapping, counts, rolled_back_at; decline events from Privacy.com | |
+| `import_batches`, `card_events` | mapping, counts, rolled_back_at; decline events from Privacy.com (which card, on the funding account) | |
 | `plaid_items` | item id, encrypted access token, cursor, status, failures | |
 | `job_runs`, `audit_log` | job, status, summary, error; actor, action, entity, before/after | every write audited |
 
@@ -215,8 +218,8 @@ Intervals are env-configurable; the defaults:
 | Job | Interval | May do | May not do |
 | --- | --- | --- | --- |
 | `sync:plaid` | 60 min | fetch transactions since cursor, upsert by external id (pending → posted in place), refresh bank balances, soft-delete removed rows | categorize, touch notes |
-| `sync:privacy` | 10 min | fetch card transactions and declines, upsert, write decline events | categorize |
-| `process` | after any sync, and every 5 min | apply rules to new rows; match rows to recurring bills (advance `next_due`, note amount drift) and planned items (mark done); shadow-link bank rows that duplicate card rows; queue the rest for review | guess a category, create a bill, change a plan |
+| `sync:privacy` | 10 min | fetch card charges and declines, upsert charges onto the funding account, write decline events | categorize |
+| `process` | after any sync, and every 5 min | pair the bank's `PwP` lines with card charges (shadow links); apply rules to new rows; match rows to recurring bills (advance `next_due`, note amount drift) and planned items (mark done); queue the rest for review | guess a category, create a bill, change a plan |
 | `evaluate` | 15 min | recompute month view and low point; raise or refresh alerts by dedupe key; note milestones (debt paid off, goal reached, payoff date slipped) | resolve, ack, or snooze an alert |
 | `notify` | 1 min | send new alerts and open questions/proposals over the enabled channels; nag unacknowledged alerts on the schedule; honor quiet hours (critical may override) | interpret a reply |
 | `housekeeping` | daily | prune old job runs, expired sessions, dead push subscriptions, delivered notification rows | touch money data |
@@ -398,7 +401,7 @@ attention, blue = income.
 | # | Question | Proposed default |
 | --- | --- | --- |
 | 1 | Do card accounts count toward "cash now"? | No; their charges count toward categories, their payment is a transfer. |
-| 2 | Privacy.com charge vs. the bank's later line for it | Shadow-link the bank row; budget counts the card row, cash counts the bank row. |
+| 2 | Privacy.com charge vs. the bank's later line for it | **Decided:** both live on the funding account; the bank's `PwP` row is shadow-linked to the card row, which the budget and the cash estimate count (the shadow counts nowhere). |
 | 3 | Everyday pace for the low point | `max(actual pace, plan pace)`, pessimistic by design. |
 | 4 | Unspent plan at month end | Resets (no rollover) in v1. |
 | 5 | Where the AI's "can we buy" answer is logged | As a question with the answer recorded, so it's auditable. |

@@ -82,8 +82,9 @@ key from `APP_ENCRYPTION_KEY`). Names: `anthropic_api_key`,
 `sync_cursor`, `status`, `last_error`, `last_synced_at`,
 `consecutive_failures`.
 
-**accounts** — `name`, `type`, `source`, `external_id` (Plaid account id or
-Privacy card token), `plaid_item_id`, `institution_label`, `mask`,
+**accounts** — `name`, `type`, `source`, `external_id` (Plaid account id;
+`privacy` is a legacy source: cards are no longer accounts, and the sync
+removes the ones earlier versions made), `plaid_item_id`, `institution_label`, `mask`,
 `currency`, `is_active`, `include_in_cash` (default true for checking /
 savings / cash, false otherwise), `reported_balance_cents` +
 `reported_balance_as_of` (user-reported), `bank_balance_cents` +
@@ -143,9 +144,11 @@ named), `note`, `matched_transaction_id`.
 date | amount | normalized description, for csv/manual dedup), `pending`,
 `note`, `planned_item_id`, `recurring_bill_id` + `bill_drift_cents`
 (matched bill and `abs(amount) − bill.amount`), `rule_id`, `review_status`,
-`import_batch_id`, `shadow_of_transaction_id` (bank row duplicating a card
-row; shadows are excluded from rollups and alert evaluation, counted in the
-cash estimate), `raw`, `deleted_at`.
+`import_batch_id`, `shadow_of_transaction_id` (the bank's `PwP` row
+duplicating a Privacy.com card row on the same account; shadows are excluded
+from rollups and alert evaluation, and from the cash estimate when the row
+they shadow is on the same account), `raw` (for `privacy` rows: the card
+token and label), `deleted_at`. Privacy rows live on the funding account.
 
 Unique `(source, external_id)` where not null; unique `(account_id,
 fingerprint)` where not null; check: plaid/privacy rows need an external id.
@@ -202,8 +205,9 @@ summary), `status`, `target` (never a secret), `external_id`, `error`,
 `sent_at`.
 
 **card_events** — Privacy.com declines (and optionally approvals):
-`account_id`, `external_id` (unique), `occurred_at`, `amount_cents`,
-`descriptor`, `result`, `reason`, `raw`.
+`account_id` (the funding account), `external_id` (unique), `occurred_at`,
+`amount_cents`, `descriptor`, `result`, `reason`, `card_token`, `card_label`
+(which card: memo and last four), `raw`.
 
 ### Jobs and audit
 

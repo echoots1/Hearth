@@ -4,6 +4,7 @@ import { AccountPicker, useAccountName } from "../../components/AccountPicker";
 import { ConfigForm } from "../../components/ConfigForm";
 import { Card, CardHead, Empty, ErrorNote, Field, Icon, PageHeader, Sheet, SheetActions, Spinner, Toggle } from "../../components/ui";
 import { api } from "../../lib/api";
+import { useAccounts } from "../../lib/data";
 import { ago, longDate, shortDate } from "../../lib/dates";
 import { money } from "../../lib/money";
 import { invalidate, useMutation, useQuery } from "../../lib/query";
@@ -19,7 +20,13 @@ type Source = "app" | "env" | null;
 type Status = {
   encryption_configured: boolean;
   plaid: { configured: boolean; source: Source; env: string | null; client_id: string | null; products: string[] | null; country_codes: string[] | null; encryption_configured: boolean; items: PlaidItem[]; last_sync: JobRun };
-  privacy: { configured: boolean; source: Source; env: string | null; cards: number; last_sync: JobRun };
+  privacy: {
+    configured: boolean; source: Source; env: string | null;
+    funding_account_id: string | null;
+    funding_account: { id: string; name: string; mask: string | null } | null;
+    funding_error: string | null;
+    last_sync: JobRun;
+  };
   csv: { presets: Preset[]; batches: Batch[] };
 };
 
@@ -165,16 +172,25 @@ function PlaidCard({ s }: { s: Status }) {
 function PrivacyCard({ s }: { s: Status }) {
   const { me } = useSession();
   const owner = me?.role === "owner";
-  const sync = useMutation(() => api.post("/api/privacy/sync", {}), ["integrations.", "accounts.", "transactions.", "alerts."]);
+  const sync = useMutation(() => api.post("/api/privacy/sync", {}), ["integrations.", "accounts.", "transactions.", "alerts.", "balance."]);
+  const { data: accounts } = useAccounts();
   const p = s.privacy;
   const [settingsOpen, setSettingsOpen] = useState(!p.configured);
+  const cards = (p.last_sync?.summary as { cards?: number } | null)?.cards;
+  const right = !p.configured ? "not set up" : p.funding_account ? `${p.env} · ${p.funding_account.name}` : p.env ?? "";
+  // Bank accounts the cards could draw from; a card is never a funding account.
+  const bankAccounts = (accounts ?? []).filter((a) => a.source !== "privacy" && a.type !== "virtual_card" && a.type !== "credit_card");
   return (
     <Card className="divider overflow-hidden">
-      <CardHead title="Virtual cards (Privacy.com)" right={p.configured ? `${p.env} · ${p.cards} card${p.cards === 1 ? "" : "s"}` : "not set up"} />
+      <CardHead title="Virtual cards (Privacy.com)" right={right} />
       <div className="flex flex-col gap-3 p-4">
         {p.configured && (
           <>
-            <p className="text-muted text-[13px] font-semibold">Each card is an account; charges sync every few minutes and declines become alerts. Bank lines for card charges are shadow-linked so cash isn't counted twice.</p>
+            <p className="text-muted text-[13px] font-semibold">
+              Card charges post to {p.funding_account ? <b>{p.funding_account.name}</b> : "the funding account"} the moment they happen, pending until they settle
+              {cards != null && ` (${cards} card${cards === 1 ? "" : "s"})`}. When the bank's own <i>PwP</i> line for a charge arrives it's paired with the card charge so nothing is counted twice. Declines become alerts.
+            </p>
+            {p.funding_error && <ErrorNote error={p.funding_error} />}
             <div className="flex items-center justify-between">
               <span className="text-muted text-[12px] font-semibold">{p.last_sync ? `last sync ${ago(p.last_sync.started_at)} · ${p.last_sync.status}` : "not synced yet"}</span>
               <div className="flex gap-2">
@@ -188,7 +204,7 @@ function PrivacyCard({ s }: { s: Status }) {
         )}
         {(settingsOpen || !p.configured) && (
           <>
-            {!p.configured && <p className="text-muted text-[13px] font-semibold">Privacy.com virtual cards show up as accounts with their charges and declines. Create an API key under Account → API on privacy.com (a paid plan is required for API access).</p>}
+            {!p.configured && <p className="text-muted text-[13px] font-semibold">Privacy.com charges show up on your bank account the moment a card is used, and pair with the bank's line when it arrives. Create an API key under Account → API on privacy.com (a paid plan is required for API access).</p>}
             <ConfigForm
               name="privacy"
               canEdit={owner}
@@ -198,10 +214,18 @@ function PrivacyCard({ s }: { s: Status }) {
               encryptionConfigured={s.encryption_configured}
               testLabel="Check the key"
               onDone={() => setSettingsOpen(false)}
-              initial={{ api_key: "", env: p.env ?? "production" }}
+              initial={{ api_key: "", env: p.env ?? "production", funding_account_id: p.funding_account_id ?? "" }}
               fields={[
                 { key: "api_key", label: "API key", secret: true, required: true },
                 { key: "env", label: "Environment", type: "select", options: [{ value: "production", label: "Production" }, { value: "sandbox", label: "Sandbox" }] },
+                {
+                  key: "funding_account_id", label: "Funding account", type: "select",
+                  hint: "The bank account your Privacy cards draw from. Charges post here and pair with its PwP lines.",
+                  options: [
+                    { value: "", label: bankAccounts.filter((a) => a.type === "checking").length === 1 ? "Your checking account (automatic)" : "Choose an account…" },
+                    ...bankAccounts.map((a) => ({ value: a.id, label: `${a.name}${a.mask ? ` ····${a.mask}` : ""}` })),
+                  ],
+                },
               ]}
             />
             {p.configured && owner && <button type="button" className="chip-light self-start" onClick={() => setSettingsOpen(false)}>Hide settings</button>}

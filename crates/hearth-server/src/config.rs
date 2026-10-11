@@ -186,6 +186,11 @@ pub struct PrivacyConfig {
     pub api_key: String,
     #[serde(default = "default_sandbox")]
     pub env: String,
+    /// The bank account Privacy.com draws from; card charges land here and
+    /// pair with the bank's `PwP` lines. `None`: the household's only
+    /// checking account, if there is exactly one.
+    #[serde(default)]
+    pub funding_account_id: Option<uuid::Uuid>,
 }
 
 fn default_sandbox() -> String {
@@ -292,6 +297,7 @@ impl Config {
         let privacy = var("PRIVACY_API_KEY").map(|api_key| PrivacyConfig {
             api_key,
             env: var("PRIVACY_ENV").unwrap_or_else(|| "sandbox".into()),
+            funding_account_id: None,
         });
 
         let ntfy = var("NTFY_TOPIC").map(|topic| NtfyConfig {

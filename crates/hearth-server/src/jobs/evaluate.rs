@@ -161,7 +161,7 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
         .collect();
 
     let decl: Vec<DeclineRow> = sqlx::query_as(
-        "select e.external_id, e.account_id, a.name, e.occurred_at, e.amount_cents, e.descriptor, e.reason
+        "select e.external_id, e.account_id, coalesce(e.card_label, a.name), e.occurred_at, e.amount_cents, e.descriptor, e.reason
          from card_events e join accounts a on a.id = e.account_id
          where a.household_id = $1 and e.result = 'declined' and e.occurred_at > now() - interval '7 days'",
     )

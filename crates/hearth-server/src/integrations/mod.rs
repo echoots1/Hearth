@@ -93,7 +93,7 @@ async fn sync_privacy(state: AppState) -> anyhow::Result<serde_json::Value> {
         .ok_or_else(|| anyhow::anyhow!("Privacy.com is not configured"))?;
     let client = privacy::Privacy::new(&cfg)?;
     let actor = crate::jobs::actor("sync:privacy");
-    let s = crate::services::privacy::sync(&ctx, &actor, &client).await?;
+    let s = crate::services::privacy::sync(&ctx, &actor, &client, cfg.funding_account_id).await?;
     let _ = crate::jobs::run_named(state.clone(), "process", "sync:privacy").await;
     Ok(serde_json::to_value(s)?)
 }

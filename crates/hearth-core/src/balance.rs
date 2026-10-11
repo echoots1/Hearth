@@ -29,7 +29,9 @@ pub struct TxnForEstimate {
     pub amount_cents: Cents,
     pub pending: bool,
     pub deleted: bool,
-    pub shadow: bool,
+    /// The bank's line for a charge another row on the **same** account already
+    /// carries (a Privacy.com charge and its `PwP` bank line). Never counted.
+    pub duplicate: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,9 +56,11 @@ pub struct AccountEstimate {
 
 /// Running estimate for one account.
 ///
-/// Counts transactions with `date > as_of_date` **or** `pending`. Shadow rows
-/// *are* counted here (they are the bank's view of cash; the card row they
-/// shadow lives on an account excluded from cash). Deleted rows never count.
+/// Counts transactions with `date > as_of_date` **or** `pending`. Deleted rows
+/// never count, nor do duplicates: when a shadow row and the row it shadows
+/// live on the same account the charge is counted once, by the primary. A
+/// shadow of a row on *another* account is still the bank's view of cash and
+/// counts (the card row lives on an account excluded from cash).
 pub fn account_estimate<'a>(
     acct: &AccountForEstimate,
     txns: impl IntoIterator<Item = &'a TxnForEstimate>,
@@ -68,7 +72,7 @@ pub fn account_estimate<'a>(
     let mut count = 0usize;
     if let Some(as_of) = as_of_date {
         for t in txns {
-            if t.account_id != acct.id || t.deleted {
+            if t.account_id != acct.id || t.deleted || t.duplicate {
                 continue;
             }
             if t.pending || t.date > as_of {
@@ -294,7 +298,7 @@ mod tests {
             amount_cents: Cents::dollars(amt),
             pending,
             deleted: false,
-            shadow: false,
+            duplicate: false,
         };
         let txns = vec![
             t("2026-03-10", -50, false), // same day as as-of: already in the balance
@@ -307,7 +311,7 @@ mod tests {
                 amount_cents: Cents::dollars(-999),
                 pending: false,
                 deleted: false,
-                shadow: false,
+                duplicate: false,
             },
             TxnForEstimate {
                 account_id: id,
@@ -315,7 +319,16 @@ mod tests {
                 amount_cents: Cents::dollars(-999),
                 pending: false,
                 deleted: true,
-                shadow: false,
+                duplicate: false,
+            },
+            // The bank's PwP line for a card charge already counted above.
+            TxnForEstimate {
+                account_id: id,
+                date: d("2026-03-12"),
+                amount_cents: Cents::dollars(-20),
+                pending: false,
+                deleted: false,
+                duplicate: true,
             },
         ];
         let e = account_estimate(&acct, &txns, chicago(), d("2026-03-13"));
