@@ -17,6 +17,10 @@ struct WebDist;
 /// Serve a static file if it exists, otherwise `index.html` (SPA fallback).
 pub async fn spa_fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    // Unknown API routes are an error, not the app shell.
+    if path.starts_with("api/") || path == "api" {
+        return (StatusCode::NOT_FOUND, "no such API route").into_response();
+    }
     if !path.is_empty()
         && let Some(file) = WebDist::get(path)
     {
