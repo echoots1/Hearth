@@ -15,4 +15,8 @@ Thanks for helping. Hearth is small on purpose; keep it that way.
 - **Commits:** small, labeled (`core:`, `api:`, `mcp:`, `jobs:`, `web:`,
   `docs:`, `plaid:`, `privacy:`, `notify:`), one concern each.
 - **PRs:** describe what changed and how you tested it. CI must be green.
-- **Releases:** none until features are close. `main` always builds.
+- **Branches and releases:** work happens on `main` through PRs; `main`
+  always builds and publishes the `:main` development image. Production
+  follows `:latest`, which moves only when a version is tagged: bump the
+  version in `Cargo.toml` and `web/package.json` in a PR, merge it, then run
+  `scripts/release.sh X.Y.Z`. `CLAUDE.md` has the full checklist.

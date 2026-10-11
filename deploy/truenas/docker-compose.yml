@@ -10,8 +10,11 @@ x-postgres-password: &postgres-password "CHANGE-ME-db-password"
 
 services:
   app:
-    image: ghcr.io/echoots1/hearth:main
-    # Pull the newest `main` every time the app is (re)deployed, so
+    # `latest` is the release channel: it moves only when a version is tagged,
+    # so a merge to main never lands here untested. Use `:main` to follow
+    # development, or `:0.1.0` to pin a release.
+    image: ghcr.io/echoots1/hearth:latest
+    # Pull the newest release every time the app is (re)deployed, so
     # Installed → hearth → Edit → Save is the update button.
     pull_policy: always
     restart: unless-stopped
