@@ -196,7 +196,7 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
         "Paycheck",
         CategorySign::Income,
         false,
-        None,
+        Some(369_600),
     )
     .await?;
     let c_other_income = category(
@@ -515,7 +515,7 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
                 checking,
                 d,
                 "SAMPLE EMPLOYER PAYROLL",
-                265_000,
+                184_800,
                 Some(c_paycheck),
             )
             .await?;
@@ -674,7 +674,7 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
             .await?;
         }
         // Everyday spending
-        if rng.chance(45) {
+        if rng.chance(36) {
             let amt = rng.dollars(28, 120);
             txn(
                 &ctx,

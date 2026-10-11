@@ -266,6 +266,7 @@ mod tests {
             if t.writes {
                 assert!(
                     t.area.is_some()
+                        || t.name.starts_with("accounts.")
                         || t.name.starts_with("alerts.")
                         || t.name.starts_with("questions.")
                         || t.name.starts_with("assistant.")

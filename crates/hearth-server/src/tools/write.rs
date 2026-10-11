@@ -21,6 +21,28 @@ fn args_of<T: serde::Serialize>(v: &T) -> Value {
     serde_json::to_value(v).unwrap_or(Value::Null)
 }
 
+// ───────────────────────── accounts (never gated: bookkeeping, not money) ─────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateAccountArgs {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub account_type: crate::db::models::AccountType,
+    pub mask: Option<String>,
+    pub institution_label: Option<String>,
+    /// Counts toward Cash now and the low point. Default: checking, savings and cash do.
+    pub include_in_cash: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct UpdateAccountArgs {
+    pub account_id: Uuid,
+    pub name: Option<String>,
+    pub include_in_cash: Option<bool>,
+    pub is_active: Option<bool>,
+    pub institution_label: Option<String>,
+}
+
 // ───────────────────────── categorizing & notes ─────────────────────────
 
 #[derive(Deserialize, JsonSchema, serde::Serialize, Clone)]
@@ -371,6 +393,51 @@ async fn resolve_category(
 
 pub fn tools() -> Vec<ToolDef> {
     vec![
+        tool!(
+            "accounts.create",
+            "Add a manual account (checking, savings, credit card, cash…). Synced accounts come from the integrations.",
+            CreateAccountArgs,
+            writes = true,
+            area = None,
+            |tc, a| {
+                services::accounts::create(
+                    &tc.ctx,
+                    &tc.actor,
+                    services::accounts::CreateAccount {
+                        name: a.name,
+                        account_type: a.account_type,
+                        source: None,
+                        external_id: None,
+                        plaid_item_id: None,
+                        institution_label: a.institution_label,
+                        mask: a.mask,
+                        include_in_cash: a.include_in_cash,
+                    },
+                )
+                .await?
+            }
+        ),
+        tool!(
+            "accounts.update",
+            "Rename an account, change whether it counts as cash, or deactivate it.",
+            UpdateAccountArgs,
+            writes = true,
+            area = None,
+            |tc, a| {
+                services::accounts::update(
+                    &tc.ctx,
+                    &tc.actor,
+                    a.account_id,
+                    services::accounts::UpdateAccount {
+                        name: a.name,
+                        include_in_cash: a.include_in_cash,
+                        is_active: a.is_active,
+                        institution_label: a.institution_label,
+                    },
+                )
+                .await?
+            }
+        ),
         // ── categorizing & notes ──
         tool!(
             "transactions.categorize",
