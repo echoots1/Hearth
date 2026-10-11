@@ -29,15 +29,53 @@ Edit `.env`. The lines that matter on day one:
 | `POSTGRES_PASSWORD` | Change it from the example. `DATABASE_URL` in compose follows it. |
 | `TRUST_PROXY` | `true` when behind a reverse proxy. |
 
-Then:
+Then check the file and start the stack. The first build compiles the Rust
+backend from source and takes a few minutes; later builds reuse the cache.
 
 ```sh
+scripts/preflight.sh            # checks .env for the usual mistakes
 docker compose up -d --build
+scripts/preflight.sh            # now also probes /api/health and tells you what's next
 ```
 
-Point your reverse proxy at port `3000` (or `PORT`). Open the app URL: the
-first visit creates the owner account and names the household. Add people
-under **More → People**.
+Open the app URL: the first visit creates the owner account and names the
+household. Add people under **More → People**.
+
+### Reverse proxy
+
+Point your proxy at port `3000` (or `PORT`) and set `TRUST_PROXY=true`. The
+MCP endpoint streams responses, so the proxy must pass `text/event-stream`
+through without buffering. Caddy does all of this with one block and fetches
+the certificate itself:
+
+```
+money.example.net {
+    reverse_proxy localhost:3000
+}
+```
+
+The nginx equivalent:
+
+```nginx
+server {
+    server_name money.example.net;
+    listen 443 ssl; # plus your certificate lines
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        client_max_body_size 20m; # CSV imports
+    }
+}
+```
+
+Only the proxy should be reachable from the internet; Postgres is never
+published, and port `3000` need not be either when the proxy runs on the
+same host.
 
 To look around with fake data first, load the demo household (it refuses a
 database that already has users):
@@ -181,6 +219,8 @@ Budget screen), a daily pass Hearth runs itself at the time you set, and
 | `401` from `/mcp` | Key missing, mistyped, or revoked. Create a new one. |
 | Push toggle fails | Not HTTPS, not installed to the home screen (iPhone), or `APP_ENCRYPTION_KEY` unset. |
 | Nothing is syncing | **More → Jobs** shows every job's last run, summary or error. `JOBS_ENABLED=false` turns the scheduler off on purpose. |
+| Container restarts in a loop | `docker compose logs app`. Usual causes: `APP_SECRET` shorter than 32 characters, Plaid keys set without `APP_ENCRYPTION_KEY`, or Postgres not ready yet (it settles within a minute). |
+| `429 Too Many Requests` | Sign-in allows 10 attempts per 5 minutes per address and `/mcp` 300 requests per minute. Behind a proxy without `TRUST_PROXY=true` every client shares the proxy's address. |
 | Plaid link fails before Link opens | `APP_ENCRYPTION_KEY` unset, or `PLAID_ENV` doesn't match the key pair. |
 
 The tool reference for the connector is in `docs/MCP.md`.

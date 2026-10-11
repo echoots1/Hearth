@@ -41,7 +41,9 @@ chat, an assistant pass job, and pushed questions, with a monthly spend cap.
 
 ```sh
 cp .env.example .env
-# set APP_SECRET (openssl rand -base64 48), APP_URL (https, behind your proxy)
+# set APP_SECRET and APP_ENCRYPTION_KEY (openssl rand -base64 48 each),
+# APP_URL (https, behind your proxy), POSTGRES_PASSWORD
+scripts/preflight.sh
 docker compose up -d --build
 ```
 
