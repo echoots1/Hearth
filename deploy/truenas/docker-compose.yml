@@ -31,7 +31,8 @@ services:
       # true when a reverse proxy (TrueNAS's own, Nginx Proxy Manager, Caddy,
       # Traefik) sits in front of Hearth.
       TRUST_PROXY: "false"
-      PORT: "3000"
+      # The app always listens on 3000 inside the container; to use a different
+      # port on the NAS change only the left side of the ports: line below.
       JOBS_ENABLED: "true"
       LOG_LEVEL: "info,sqlx=warn"
       # Optional integrations: see .env.example in the repo for the full list
@@ -39,7 +40,8 @@ services:
       # NTFY_TOPIC: ""
       # SMTP_HOST: ""
     ports:
-      # CHANGE the left side if 3000 is taken on the NAS.
+      # CHANGE the left side if 3000 is taken on the NAS (for example
+      # "3456:3000"). Never the right side.
       - "3000:3000"
     depends_on:
       db:
