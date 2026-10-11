@@ -4,6 +4,8 @@
 
 mod api;
 mod assets;
+#[allow(dead_code)] // consumed by the API step
+mod auth;
 #[allow(dead_code)] // fields are consumed as integrations land
 mod config;
 mod db;
