@@ -151,7 +151,8 @@ later it is a separate small service that talks to the same MCP surface.
 
 - **Backend: Rust.** Axum on Tokio; sqlx on PostgreSQL 16 with embedded SQL
   migrations; `rmcp` for the MCP server; `reqwest` clients for Plaid and
-  Privacy.com; `web-push` for push delivery; `lettre` for SMTP. One static binary, small image, strong
+  Privacy.com; Web Push (VAPID, RFC 8291) implemented directly on p256 and
+  AES-GCM; `lettre` for SMTP. One static binary, small image, strong
   types around money.
 - **UI: TypeScript.** Vite + React + Tailwind, mobile-first, built to static
   files and embedded in the binary. Ships as a PWA (manifest, service

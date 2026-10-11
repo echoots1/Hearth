@@ -15,6 +15,7 @@ import { ApiKeys } from "./screens/more/ApiKeys";
 import { Assistant } from "./screens/more/Assistant";
 import { Audit } from "./screens/more/Audit";
 import { Integrations } from "./screens/more/Integrations";
+import { Jobs } from "./screens/more/Jobs";
 import { Notifications } from "./screens/more/Notifications";
 import { Rules } from "./screens/more/Rules";
 import { SettingsScreen } from "./screens/more/Settings";
@@ -52,6 +53,7 @@ function Gate() {
         <Route path="more/users" element={<Users />} />
         <Route path="more/keys" element={<ApiKeys />} />
         <Route path="more/integrations" element={<Integrations />} />
+        <Route path="more/jobs" element={<Jobs />} />
         <Route path="more/audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

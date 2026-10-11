@@ -91,6 +91,50 @@ impl Cents {
         self.mul_div(bps, 10_000)
     }
 
+    /// Parse a decimal string ("12.50", "-3", "1,234.5", "$80", "(12.00)")
+    /// into cents without touching floats. More than two decimals round
+    /// half away from zero. `None` if it isn't a number.
+    pub fn parse_decimal(text: &str) -> Option<Cents> {
+        let t: String = text
+            .trim()
+            .chars()
+            .filter(|c| !matches!(c, ',' | '$' | ' ' | '\u{a0}'))
+            .collect();
+        let (neg, body) = if let Some(inner) = t.strip_prefix('(').and_then(|r| r.strip_suffix(')'))
+        {
+            (true, inner.to_string())
+        } else if let Some(r) = t.strip_prefix('-').or_else(|| t.strip_prefix('\u{2212}')) {
+            (true, r.to_string())
+        } else {
+            (false, t.strip_prefix('+').unwrap_or(&t).to_string())
+        };
+        if body.is_empty() {
+            return None;
+        }
+        let (whole, frac) = match body.split_once('.') {
+            Some((w, f)) => (w, f),
+            None => (body.as_str(), ""),
+        };
+        if !whole.chars().all(|c| c.is_ascii_digit()) || !frac.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        if whole.is_empty() && frac.is_empty() {
+            return None;
+        }
+        let whole: i64 = if whole.is_empty() {
+            0
+        } else {
+            whole.parse().ok()?
+        };
+        let mut digits: Vec<u8> = frac.bytes().map(|b| b - b'0').collect();
+        digits.resize(3, 0);
+        let mut cents = whole.checked_mul(100)? + i64::from(digits[0]) * 10 + i64::from(digits[1]);
+        if digits[2] >= 5 {
+            cents += 1;
+        }
+        Some(Cents(if neg { -cents } else { cents }))
+    }
+
     /// Format as a plain decimal string without currency symbol or grouping,
     /// e.g. `-1234.56`. Suitable for logs and notification text.
     pub fn to_decimal_string(self) -> String {
@@ -214,6 +258,22 @@ impl From<i64> for Cents {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_decimal_cases() {
+        use super::Cents;
+        assert_eq!(Cents::parse_decimal("12.50"), Some(Cents(1250)));
+        assert_eq!(Cents::parse_decimal("-3"), Some(Cents(-300)));
+        assert_eq!(Cents::parse_decimal("1,234.5"), Some(Cents(123_450)));
+        assert_eq!(Cents::parse_decimal("$80"), Some(Cents(8000)));
+        assert_eq!(Cents::parse_decimal("(12.00)"), Some(Cents(-1200)));
+        assert_eq!(Cents::parse_decimal("0.005"), Some(Cents(1)));
+        assert_eq!(Cents::parse_decimal(".5"), Some(Cents(50)));
+        assert_eq!(Cents::parse_decimal("\u{2212}7.25"), Some(Cents(-725)));
+        assert_eq!(Cents::parse_decimal("abc"), None);
+        assert_eq!(Cents::parse_decimal(""), None);
+        assert_eq!(Cents::parse_decimal("1.2.3"), None);
+    }
+
     use super::*;
 
     #[test]
