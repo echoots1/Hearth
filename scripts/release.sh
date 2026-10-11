@@ -8,6 +8,10 @@
 # checked the exact commit being released. This script only verifies and
 # tags; the tag push makes the Image workflow publish ghcr.io/<owner>/hearth
 # as :X.Y.Z, :X.Y and :latest and create the GitHub Release.
+#
+# Without push rights to tags (cloud agent sessions, for one) dispatch the
+# workflow instead; it does the same checks and creates the tag itself:
+#   gh workflow run image.yml --ref main -f release=X.Y.Z
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
