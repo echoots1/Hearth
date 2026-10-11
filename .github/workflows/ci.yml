@@ -1,9 +1,39 @@
 name: CI
 
+# Runs on anything that could change the build or the tests. Docs, the
+# compose and deploy files, scripts and the Dependabot config skip it
+# (docs/MCP.md is checked by a test, so it stays in). A newer push to the
+# same PR or to main cancels a run still going for an older one.
 on:
   push:
     branches: [main]
+    paths:
+      - "**"
+      - "!**.md"
+      - "docs/MCP.md"
+      - "!deploy/**"
+      - "!scripts/**"
+      - "!docker-compose*.yml"
+      - "!.env.example"
+      - "!LICENSE"
+      - "!.github/dependabot.yml"
+      - "!.github/workflows/image.yml"
   pull_request:
+    paths:
+      - "**"
+      - "!**.md"
+      - "docs/MCP.md"
+      - "!deploy/**"
+      - "!scripts/**"
+      - "!docker-compose*.yml"
+      - "!.env.example"
+      - "!LICENSE"
+      - "!.github/dependabot.yml"
+      - "!.github/workflows/image.yml"
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always

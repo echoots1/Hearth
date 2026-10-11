@@ -204,7 +204,10 @@ restart needed.
 
 ### Operate it
 
-**Update.** The `main` tag moves with the repository.
+**Update.** The `main` tag moves with the repository: it is rebuilt by a
+push to `main` that changes the app itself (the Rust and web sources, the
+Cargo manifests, the Dockerfile). Documentation, compose and deploy-file
+changes do not produce a new image, so a pull after one of those is a no-op.
 
 ```sh
 docker compose pull && docker compose up -d
@@ -216,8 +219,8 @@ automatically when the new version starts; take a backup first (below),
 because migrations are forward-only and the way back from a bad update is
 the backup, not an older image.
 
-**Pin or roll back.** Every push to `main` is also tagged `sha-<short>` (the
-first seven characters of the commit). Set `HEARTH_TAG=sha-abc1234` in `.env`
+**Pin or roll back.** Every image build is also tagged `sha-<short>` (the
+first seven characters of the commit it was built from). Set `HEARTH_TAG=sha-abc1234` in `.env`
 (or edit the `image:` line on TrueNAS) to stay on a known build. The tags are
 listed at <https://github.com/echoots1/Hearth/pkgs/container/hearth>.
 

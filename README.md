@@ -40,7 +40,9 @@ chat, an assistant pass job, and pushed questions, with a monthly spend cap.
 ## Quick start (Docker)
 
 Prebuilt images for `linux/amd64` and `linux/arm64` are published at
-`ghcr.io/echoots1/hearth` on every push to `main`.
+`ghcr.io/echoots1/hearth` on every push to `main` that changes the app
+(sources, Cargo manifests, Dockerfile); docs and deploy-file changes do
+not rebuild it.
 
 ```sh
 cp .env.example .env     # set POSTGRES_PASSWORD; everything else is set in the app
