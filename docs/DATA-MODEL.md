@@ -231,6 +231,13 @@ transactions against "Sample Grocer", "Example Fuel", "Demo Video";
 three planned items; one sinking fund; two debts; one goal; two alerts, one
 question and one proposal.
 
+Load it with `hearth seed` (in Docker: `docker compose exec app hearth seed`).
+It refuses to run on a database that already has users; `hearth seed --force`
+wipes every table first and is for demo databases only. Everything goes
+through the services layer, so the audit log, the assistant's Driver action
+with its undo, and the Backseat proposal look exactly as real use produces
+them. Dates are relative to the day it runs.
+
 ## 5. Migration policy
 
 Schema changes land as a new `migrations/<timestamp>_<name>.sql` plus the

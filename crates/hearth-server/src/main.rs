@@ -10,6 +10,7 @@ mod config;
 mod db;
 mod integrations;
 mod mcp;
+mod seed;
 #[allow(dead_code)] // consumed by the API, MCP and jobs steps
 mod services;
 #[allow(dead_code)] // consumed by the API and MCP steps
@@ -38,6 +39,12 @@ enum Command {
     Migrate,
     /// Print the MCP tool reference as Markdown (the body of docs/MCP.md).
     Tools,
+    /// Load the obviously fake demo household (refuses unless the database is empty).
+    Seed {
+        /// Wipe every table first. Demo databases only.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[tokio::main]
@@ -59,6 +66,10 @@ async fn main() -> anyhow::Result<()> {
             let pool = db::connect(&config.database_url).await?;
             db::migrate(&pool).await?;
             tracing::info!("migrations complete");
+        }
+        Command::Seed { force } => {
+            let pool = db::connect(&config.database_url).await?;
+            seed::run(config, pool, force).await?;
         }
         Command::Serve => serve(config).await?,
     }
