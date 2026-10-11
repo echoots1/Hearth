@@ -18,9 +18,8 @@ a phone and widens gracefully. Demo data only in mockups and seeds.
 ## Installable
 
 The web UI is a PWA: add to home screen on Android or iOS for a full-screen
-app with its own icon, splash, and push notifications. An optional
-sideloadable Android APK (Trusted Web Activity) wraps the same UI with no
-browser chrome. Notifications carry Acknowledge / Snooze / Open actions.
+app with its own icon, splash, and push notifications. No separate native
+app. Notifications carry Acknowledge / Snooze / Open actions.
 
 ## Navigation
 

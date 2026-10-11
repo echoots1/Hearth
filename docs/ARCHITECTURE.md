@@ -94,7 +94,7 @@ series from account and debt balance snapshots.
 Jobs detect; people and the AI decide. A job never categorizes an ambiguous
 transaction, never resolves an alert, never changes a plan.
 
-## 4. Integrations — proposed
+## 4. Integrations — ✓ decided
 
 All optional, all behind environment variables; absent config = disabled.
 
@@ -112,28 +112,19 @@ All optional, all behind environment variables; absent config = disabled.
 
 ### The app on your phone
 
-Hearth is an **installable web app (PWA)**, and the phone build is a thin
-shell around it rather than a second codebase:
+Hearth is an **installable web app (PWA)**; there is no separate phone
+build. The web UI ships a manifest and a service worker, so "Add to Home
+Screen" on Android or iOS gives a full-screen app with its own icon and
+splash, an offline shell, and **Web Push** notifications that arrive with
+the app closed. Push uses VAPID keys the server generates on first run; no
+Firebase project, Google account, or app store is involved. On Android the
+browser routes delivery through its own push service; on iOS push works
+once the app is on the home screen. HTTPS on `APP_URL` is required, which
+the reverse proxy already provides.
 
-- The web UI ships a manifest and a service worker, so "Add to Home Screen"
-  on Android or iOS gives a full-screen app with its own icon and splash,
-  offline shell, and **Web Push** notifications that arrive with the app
-  closed. Push uses VAPID keys the server generates on first run; no
-  Firebase project or Google account is needed on the Hearth side. (On
-  Android the browser routes delivery through its own push service; on iOS
-  push works once the app is on the home screen.)
-- For people who want a real **APK to sideload**, the repo includes a
-  Trusted Web Activity (TWA) wrapper built with Bubblewrap: a few hundred
-  lines of generated Android project that opens the PWA in a full-screen
-  Chrome engine with no browser chrome. The server serves
-  `/.well-known/assetlinks.json` with the APK's signing fingerprint (an env
-  setting) so the URL bar disappears. CI builds the APK as an artifact; no
-  Play Store.
-- Why not a native app with a WebView and FCM: it means a Firebase account,
-  a second notification path to maintain, and a codebase that drifts from
-  the web UI. The TWA route gives the same feel with one UI and one
-  notification path. If a native client is ever wanted, the API and MCP
-  surface are already there for it.
+A native client (APK or otherwise) is deliberately out of scope: one UI,
+one notification path. The JSON API and MCP surface are there if someone
+ever wants to build one.
 
 ### Notifications out
 
@@ -164,8 +155,7 @@ later it is a separate small service that talks to the same MCP surface.
   types around money.
 - **UI: TypeScript.** Vite + React + Tailwind, mobile-first, built to static
   files and embedded in the binary. Ships as a PWA (manifest, service
-  worker, Web Push) and optionally as a TWA APK generated with Bubblewrap
-  from `android/`.
+  worker, Web Push); no native client.
 - **Packaging:** one Docker image plus Postgres in `docker-compose.yml`;
   runs behind any reverse proxy; migrations run on start.
 - **Conventions:** money is integer cents (`bigint` / `i64`, never a float;
@@ -290,6 +280,6 @@ institutions or people; seed data is obviously fake.
 | 7 | One bill → one category, or can a bill split? | **Decided:** one category by default; a bill can be split across categories only when a person asks for it (by chat or in the form), never on the assistant's own initiative. |
 | 8 | Do yearly bills live in a category too? | **Decided:** yes. A yearly/quarterly bill posts to its category in the month it hits; the saving for all of them shows as one "Sinking fund" row on the Budget, with the per-bill breakdown on the Plan tab. |
 | 9 | Who suggests, who acts? | **Decided:** the app computes every option's numbers; the assistant recommends. Whether it may also *apply* a change is the Backseat / Driver setting in §8, per area, default Driver for categorizing and notes, Backseat for plans, bills, and strategy. |
-| 12 | Phone app path | Proposed: PWA + Web Push as the baseline, TWA APK for sideloading, no native WebView/FCM app. Requires HTTPS on `APP_URL` (already assumed behind the reverse proxy). |
+| 12 | Phone app path | **Decided:** PWA + Web Push only; no APK or native client. Requires HTTPS on `APP_URL` (already assumed behind the reverse proxy). |
 | 11 | Undo | Proposed: changes made by the assistant in Driver mode get an Undo in Activity for categorize, note, plan amount, and strategy; adding a bill is reversed by canceling it. Undo is a new audited write, not a rollback. |
 | 10 | Wealth building scope | Phase 2: net worth from balance snapshots, investment accounts with manually reported balances, contribution tracking. No brokerage sync or market data in scope yet. |
