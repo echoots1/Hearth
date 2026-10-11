@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
 import { AccountPicker, useAccountName } from "../../components/AccountPicker";
 import { ConfigForm } from "../../components/ConfigForm";
 import { Card, CardHead, Empty, ErrorNote, Field, Icon, PageHeader, Sheet, SheetActions, Spinner, Toggle } from "../../components/ui";
@@ -7,6 +8,7 @@ import { ago, longDate, shortDate } from "../../lib/dates";
 import { money } from "../../lib/money";
 import { invalidate, useMutation, useQuery } from "../../lib/query";
 import { useSession } from "../../lib/session";
+import { accountTypeLabel } from "./Accounts";
 
 type Mapping = { date: string; description: string; amount?: string | null; debit?: string | null; credit?: string | null; external_id?: string | null; date_format: string; negate: boolean; has_header: boolean };
 type Preset = { name: string; mapping: Mapping; account_id?: string | null };
@@ -140,13 +142,14 @@ function PlaidCard({ s }: { s: Status }) {
               </div>
               {it.accounts.map((a) => (
                 <div key={a.id} className="text-muted flex justify-between text-[12px] font-semibold">
-                  <span>{a.name}{a.mask && ` ····${a.mask}`}{!a.is_active && " · inactive"}</span>
+                  <span>{a.name}{a.mask && ` ····${a.mask}`} · {accountTypeLabel(a.type)}{!a.is_active && " · inactive"}</span>
                   <span>{a.bank_balance_cents != null ? `${money(a.bank_balance_cents)} (${ago(a.bank_balance_as_of)})` : ""}</span>
                 </div>
               ))}
             </div>
           ))}
           <div className="flex flex-col gap-2 p-4">
+            {p.items.length > 0 && <p className="text-faint text-[11px] font-semibold">Account types are the bank's guess. Fix one under <Link className="underline" to="/more/accounts">Accounts</Link>, or ask the assistant.</p>}
             {!p.encryption_configured && <ErrorNote error="APP_ENCRYPTION_KEY is required before linking: access tokens are stored encrypted." />}
             {owner && <button type="button" className="btn-dark" disabled={busy || !p.encryption_configured} onClick={link}>{busy ? "Opening Plaid Link…" : "Link a bank"}</button>}
             <p className="text-faint text-[11px] font-semibold">Plaid Link loads from cdn.plaid.com only when you tap the button.</p>

@@ -135,7 +135,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | Tool | Area | Description |
 | --- | --- | --- |
 | `accounts.create` | always applies | Add a manual account (checking, savings, credit card, cash…). Synced accounts come from the integrations. |
-| `accounts.update` | always applies | Rename an account, change whether it counts as cash, or deactivate it. |
+| `accounts.update` | always applies | Rename an account, change its type (checking, savings, credit card, loan…), change whether it counts as cash, or deactivate it. Works on synced accounts too. |
 | `alerts.ack` | always applies | Acknowledge an alert (a human has seen it; nagging stops). |
 | `alerts.reopen` | always applies | Reopen a done alert. |
 | `alerts.resolve` | always applies | Mark an alert done with a short resolution. |
@@ -258,12 +258,28 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 
 ```json
 {
+  "$defs": {
+    "AccountType": {
+      "enum": [
+        "checking",
+        "savings",
+        "credit_card",
+        "virtual_card",
+        "cash",
+        "loan",
+        "investment",
+        "other"
+      ],
+      "type": "string"
+    }
+  },
   "properties": {
     "account_id": {
       "format": "uuid",
       "type": "string"
     },
     "include_in_cash": {
+      "description": "Counts toward Cash now and the low point. When the type changes and this is omitted, the new type's default applies (checking, savings and cash count).",
       "type": [
         "boolean",
         "null"
@@ -286,6 +302,17 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
         "string",
         "null"
       ]
+    },
+    "type": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AccountType"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Reclassify the account: checking, savings, credit_card, virtual_card, cash, loan, investment or other. A bank-synced account's type is only Plaid's guess; fix it here when it is wrong."
     }
   },
   "required": [
