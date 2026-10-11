@@ -88,6 +88,24 @@ async fn rehome(ctx: &Ctx, actor: &Actor, funding: &Account) -> Result<usize> {
     .execute(&ctx.pool)
     .await?
     .rows_affected();
+    // Anything else that pointed at a card account points at the funding
+    // account now, so removing the card account loses nothing.
+    for sql in [
+        "update rules x set account_id = $2, updated_at = now() from accounts a
+          where a.id = x.account_id and a.household_id = $1 and a.source = 'privacy' and x.account_id <> $2",
+        "update import_batches x set account_id = $2 from accounts a
+          where a.id = x.account_id and a.household_id = $1 and a.source = 'privacy' and x.account_id <> $2",
+        "update recurring_bills x set account_id = $2, updated_at = now() from accounts a
+          where a.id = x.account_id and a.household_id = $1 and a.source = 'privacy' and x.account_id <> $2",
+        "update alerts x set account_id = $2, updated_at = now() from accounts a
+          where a.id = x.account_id and a.household_id = $1 and a.source = 'privacy' and x.account_id <> $2",
+    ] {
+        sqlx::query(sql)
+            .bind(ctx.household_id)
+            .bind(funding.id)
+            .execute(&ctx.pool)
+            .await?;
+    }
     let stale: Vec<Account> = sqlx::query_as(
         "select * from accounts where household_id = $1 and source = 'privacy'
            and not exists (select 1 from transactions t where t.account_id = accounts.id)

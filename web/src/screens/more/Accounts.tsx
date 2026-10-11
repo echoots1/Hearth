@@ -21,12 +21,15 @@ export function Accounts() {
   const [add, setAdd] = useState(false);
   const [edit, setEdit] = useState<Account | null>(null);
   if (!accounts.data) return <Spinner />;
+  // Privacy.com cards are not accounts; the ones earlier versions made are
+  // inactive until the sync removes them, and are not worth a row here.
+  const rows = accounts.data.filter((a) => !(a.source === "privacy" && !a.is_active));
   return (
     <>
       <PageHeader title="Accounts" back="/more" />
       <Card className="divider overflow-hidden">
-        {accounts.data.length === 0 && <Empty>No accounts yet.</Empty>}
-        {accounts.data.map((a) => (
+        {rows.length === 0 && <Empty>No accounts yet.</Empty>}
+        {rows.map((a) => (
           <button key={a.id} type="button" className="row w-full text-left" onClick={() => setEdit(a)}>
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="truncate text-[15px] font-bold">{a.name}{!a.is_active && <span className="bg-line ml-2 rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase">inactive</span>}</span>

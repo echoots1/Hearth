@@ -83,8 +83,8 @@ key from `APP_ENCRYPTION_KEY`). Names: `anthropic_api_key`,
 `consecutive_failures`.
 
 **accounts** — `name`, `type`, `source`, `external_id` (Plaid account id;
-`privacy` is a legacy source: cards are no longer accounts, and the sync
-removes the ones earlier versions made), `plaid_item_id`, `institution_label`, `mask`,
+`privacy` is a legacy source: cards are no longer accounts, and migration
+0005 or the sync removes the ones earlier versions made), `plaid_item_id`, `institution_label`, `mask`,
 `currency`, `is_active`, `include_in_cash` (default true for checking /
 savings / cash, false otherwise), `reported_balance_cents` +
 `reported_balance_as_of` (user-reported), `bank_balance_cents` +
