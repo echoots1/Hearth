@@ -15,6 +15,7 @@ pub mod csv_import;
 pub mod debts;
 pub mod goals;
 pub mod household;
+pub mod integrations;
 pub mod notifications;
 pub mod plaid;
 pub mod planned;

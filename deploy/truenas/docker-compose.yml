@@ -35,10 +35,8 @@ services:
       # port on the NAS change only the left side of the ports: line below.
       JOBS_ENABLED: "true"
       LOG_LEVEL: "info,sqlx=warn"
-      # Optional integrations: see .env.example in the repo for the full list
-      # (Plaid, Privacy.com, ntfy, SMTP). Leave unset to keep them off.
-      # NTFY_TOPIC: ""
-      # SMTP_HOST: ""
+      # Plaid, Privacy.com, ntfy and email are set up inside the app
+      # (More → Integrations, More → Notifications), not here.
     ports:
       # CHANGE the left side if 3000 is taken on the NAS (for example
       # "3456:3000"). Never the right side.

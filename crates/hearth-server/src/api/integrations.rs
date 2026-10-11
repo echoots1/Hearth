@@ -8,8 +8,12 @@ use uuid::Uuid;
 
 use super::{ApiError, AppState};
 use crate::auth::extract::AuthUser;
+use crate::config::{NtfyConfig, PlaidConfig, PrivacyConfig, SmtpConfig};
 use crate::integrations::plaid::Plaid;
-use crate::services::{self, csv_import};
+use crate::integrations::privacy::Privacy;
+use crate::integrations::{ntfy, smtp};
+use crate::services::integrations::{self as integ, Source};
+use crate::services::{self, Ctx, csv_import};
 
 fn owner_only(u: &AuthUser) -> Result<(), ApiError> {
     if u.is_owner() {
@@ -21,11 +25,19 @@ fn owner_only(u: &AuthUser) -> Result<(), ApiError> {
     }
 }
 
-fn plaid_client(state: &AppState) -> Result<Plaid, ApiError> {
-    let cfg = state.config.plaid.as_ref().ok_or_else(|| {
-        ApiError::bad_request("Plaid is not configured (PLAID_CLIENT_ID / PLAID_SECRET)")
+async fn plaid_client(state: &AppState, ctx: &Ctx) -> Result<Plaid, ApiError> {
+    let (cfg, _) = integ::plaid(ctx, &state.config).await?.ok_or_else(|| {
+        ApiError::bad_request("Plaid is not configured: add your keys under More → Integrations")
     })?;
-    Plaid::new(cfg).map_err(|e| ApiError::bad_request(e.to_string()))
+    Plaid::new(&cfg).map_err(|e| ApiError::bad_request(e.to_string()))
+}
+
+fn source_json(s: Option<Source>) -> Value {
+    match s {
+        Some(Source::App) => json!("app"),
+        Some(Source::Env) => json!("env"),
+        None => Value::Null,
+    }
 }
 
 pub async fn status(State(state): State<AppState>, _u: AuthUser) -> Result<Json<Value>, ApiError> {
@@ -63,13 +75,256 @@ pub async fn status(State(state): State<AppState>, _u: AuthUser) -> Result<Json<
     };
     let batches = csv_import::batches(&ctx).await?;
     let presets = csv_import::presets(&ctx).await?;
+    let plaid = integ::plaid(&ctx, &state.config).await?;
+    let privacy = integ::privacy(&ctx, &state.config).await?;
+    let ntfy = integ::ntfy(&ctx, &state.config).await?;
+    let smtp = integ::smtp(&ctx, &state.config).await?;
+    let encryption_configured = state.crypto.is_some();
     Ok(Json(json!({
-        "plaid": { "configured": state.config.plaid.is_some(), "env": state.config.plaid.as_ref().map(|p| p.env.clone()), "encryption_configured": state.crypto.is_some(), "items": plaid_items, "last_sync": last("sync:plaid").await? },
-        "privacy": { "configured": state.config.privacy.is_some(), "env": state.config.privacy.as_ref().map(|p| p.env.clone()), "cards": privacy_cards, "last_sync": last("sync:privacy").await? },
+        "encryption_configured": encryption_configured,
+        "plaid": {
+            "configured": plaid.is_some(), "source": source_json(plaid.as_ref().map(|(_, s)| *s)),
+            "env": plaid.as_ref().map(|(p, _)| p.env.clone()), "client_id": plaid.as_ref().map(|(p, _)| p.client_id.clone()),
+            "products": plaid.as_ref().map(|(p, _)| p.products.clone()), "country_codes": plaid.as_ref().map(|(p, _)| p.country_codes.clone()),
+            "encryption_configured": encryption_configured, "items": plaid_items, "last_sync": last("sync:plaid").await?,
+        },
+        "privacy": {
+            "configured": privacy.is_some(), "source": source_json(privacy.as_ref().map(|(_, s)| *s)),
+            "env": privacy.as_ref().map(|(p, _)| p.env.clone()), "cards": privacy_cards, "last_sync": last("sync:privacy").await?,
+        },
+        "ntfy": {
+            "configured": ntfy.is_some(), "source": source_json(ntfy.as_ref().map(|(_, s)| *s)),
+            "url": ntfy.as_ref().map(|(n, _)| n.url.clone()), "topic": ntfy.as_ref().map(|(n, _)| n.topic.clone()),
+            "has_token": ntfy.as_ref().is_some_and(|(n, _)| n.token.is_some()),
+        },
+        "smtp": {
+            "configured": smtp.is_some(), "source": source_json(smtp.as_ref().map(|(_, s)| *s)),
+            "host": smtp.as_ref().map(|(s, _)| s.host.clone()), "port": smtp.as_ref().map(|(s, _)| s.port),
+            "user": smtp.as_ref().and_then(|(s, _)| s.user.clone()), "has_pass": smtp.as_ref().is_some_and(|(s, _)| s.pass.is_some()),
+            "from": smtp.as_ref().map(|(s, _)| s.from.clone()), "alert_to": smtp.as_ref().map(|(s, _)| s.alert_to.clone()),
+        },
         "csv": { "presets": presets, "batches": batches },
-        "ntfy": state.config.ntfy.is_some(),
-        "smtp": state.config.smtp.is_some(),
     })))
+}
+
+fn s(v: &Value, key: &str) -> Option<String> {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+}
+
+fn list(v: &Value, key: &str) -> Option<Vec<String>> {
+    match v.get(key) {
+        Some(Value::Array(a)) => Some(
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect(),
+        ),
+        Some(Value::String(t)) => Some(
+            t.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect(),
+        ),
+        _ => None,
+    }
+    .filter(|v: &Vec<String>| !v.is_empty())
+}
+
+fn need(v: &Value, key: &str, label: &str) -> Result<String, ApiError> {
+    s(v, key).ok_or_else(|| ApiError::bad_request(format!("{label} is required")))
+}
+
+/// Save an integration's settings in the app. A secret field may be left
+/// empty to keep the one already stored.
+pub async fn configure(
+    State(state): State<AppState>,
+    u: AuthUser,
+    Path(name): Path<String>,
+    Json(b): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    owner_only(&u)?;
+    if state.crypto.is_none() {
+        return Err(ApiError::bad_request(
+            "APP_ENCRYPTION_KEY is not set, so secrets cannot be stored; set it and restart",
+        ));
+    }
+    let ctx = state.ctx().await?;
+    let actor = u.actor();
+    match name.as_str() {
+        "plaid" => {
+            let prev: Option<PlaidConfig> = integ::stored(&ctx, integ::PLAID).await?;
+            let cfg = PlaidConfig {
+                client_id: need(&b, "client_id", "Client ID")?,
+                secret: s(&b, "secret")
+                    .or_else(|| prev.as_ref().map(|p| p.secret.clone()))
+                    .ok_or_else(|| ApiError::bad_request("Secret is required"))?,
+                env: s(&b, "env").unwrap_or_else(|| "sandbox".into()),
+                products: list(&b, "products").unwrap_or_else(|| vec!["transactions".into()]),
+                country_codes: list(&b, "country_codes").unwrap_or_else(|| vec!["US".into()]),
+            };
+            Plaid::new(&cfg).map_err(|e| ApiError::bad_request(e.to_string()))?;
+            integ::save(&ctx, &actor, integ::PLAID, &cfg).await?;
+        }
+        "privacy" => {
+            let prev: Option<PrivacyConfig> = integ::stored(&ctx, integ::PRIVACY).await?;
+            let cfg = PrivacyConfig {
+                api_key: s(&b, "api_key")
+                    .or_else(|| prev.as_ref().map(|p| p.api_key.clone()))
+                    .ok_or_else(|| ApiError::bad_request("API key is required"))?,
+                env: s(&b, "env").unwrap_or_else(|| "sandbox".into()),
+            };
+            Privacy::new(&cfg).map_err(|e| ApiError::bad_request(e.to_string()))?;
+            integ::save(&ctx, &actor, integ::PRIVACY, &cfg).await?;
+        }
+        "ntfy" => {
+            let prev: Option<NtfyConfig> = integ::stored(&ctx, integ::NTFY).await?;
+            let url = s(&b, "url").unwrap_or_else(|| "https://ntfy.sh".into());
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err(ApiError::bad_request(
+                    "Server URL must start with http:// or https://",
+                ));
+            }
+            let cfg = NtfyConfig {
+                url: url.trim_end_matches('/').to_string(),
+                topic: need(&b, "topic", "Topic")?,
+                token: s(&b, "token").or_else(|| prev.and_then(|p| p.token)),
+            };
+            integ::save(&ctx, &actor, integ::NTFY, &cfg).await?;
+        }
+        "smtp" => {
+            let prev: Option<SmtpConfig> = integ::stored(&ctx, integ::SMTP).await?;
+            let port = match b.get("port") {
+                None | Some(Value::Null) => 587,
+                Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u16,
+                Some(Value::String(t)) if t.trim().is_empty() => 587,
+                Some(Value::String(t)) => t
+                    .trim()
+                    .parse::<u16>()
+                    .map_err(|_| ApiError::bad_request("Port must be a number"))?,
+                _ => return Err(ApiError::bad_request("Port must be a number")),
+            };
+            if port == 0 {
+                return Err(ApiError::bad_request("Port must be between 1 and 65535"));
+            }
+            let cfg = SmtpConfig {
+                host: need(&b, "host", "SMTP host")?,
+                port,
+                user: s(&b, "user"),
+                pass: s(&b, "pass").or_else(|| prev.and_then(|p| p.pass)),
+                from: need(&b, "from", "From address")?,
+                alert_to: need(&b, "alert_to", "Send alerts to")?,
+            };
+            for (label, addr) in [
+                ("From address", &cfg.from),
+                ("Send alerts to", &cfg.alert_to),
+            ] {
+                addr.parse::<lettre::message::Mailbox>()
+                    .map_err(|e| ApiError::bad_request(format!("{label}: {e}")))?;
+            }
+            integ::save(&ctx, &actor, integ::SMTP, &cfg).await?;
+        }
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unknown integration {other:?}"
+            )));
+        }
+    }
+    Ok(Json(json!({ "stored": true })))
+}
+
+/// Forget the app's copy. The environment, if set, applies again.
+pub async fn unconfigure(
+    State(state): State<AppState>,
+    u: AuthUser,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    owner_only(&u)?;
+    let secret = integ::secret_name(&name)?;
+    let ctx = state.ctx().await?;
+    integ::clear(&ctx, &u.actor(), secret).await?;
+    Ok(Json(json!({ "stored": false })))
+}
+
+/// Exercise the effective configuration once and report what happened.
+pub async fn test(
+    State(state): State<AppState>,
+    u: AuthUser,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    owner_only(&u)?;
+    let ctx = state.ctx().await?;
+    let bad = |e: anyhow::Error| ApiError::bad_request(e.to_string());
+    let detail = match name.as_str() {
+        "plaid" => {
+            let client = plaid_client(&state, &ctx).await?;
+            client
+                .link_token(&u.0.id.to_string(), &state.config.app_url)
+                .await
+                .map_err(bad)?;
+            "Plaid accepted the keys (a Link token was issued).".to_string()
+        }
+        "privacy" => {
+            let (cfg, _) = integ::privacy(&ctx, &state.config)
+                .await?
+                .ok_or_else(|| ApiError::bad_request("Privacy.com is not configured"))?;
+            let client = Privacy::new(&cfg).map_err(bad)?;
+            let cards = client.cards().await.map_err(bad)?;
+            format!(
+                "Privacy.com answered: {} card{}.",
+                cards.len(),
+                if cards.len() == 1 { "" } else { "s" }
+            )
+        }
+        "ntfy" => {
+            let (cfg, _) = integ::ntfy(&ctx, &state.config)
+                .await?
+                .ok_or_else(|| ApiError::bad_request("ntfy is not configured"))?;
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .map_err(|e| bad(e.into()))?;
+            let msg = ntfy::Message {
+                title: "Hearth test",
+                body: "Notifications from Hearth will arrive here.",
+                url: Some(&state.config.app_url),
+                priority: 3,
+                tag: Some("fire"),
+                actions: vec![],
+            };
+            ntfy::send(&client, &cfg, &msg).await.map_err(bad)?;
+            format!("Sent a test message to topic {}.", cfg.topic)
+        }
+        "smtp" => {
+            let (cfg, _) = integ::smtp(&ctx, &state.config)
+                .await?
+                .ok_or_else(|| ApiError::bad_request("email is not configured"))?;
+            smtp::send(
+                &cfg,
+                "Hearth test",
+                &format!(
+                    "Alerts from Hearth will arrive here.
+
+Open Hearth: {}
+",
+                    state.config.app_url
+                ),
+            )
+            .await
+            .map_err(bad)?;
+            format!("Sent a test email to {}.", cfg.alert_to)
+        }
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unknown integration {other:?}"
+            )));
+        }
+    };
+    Ok(Json(json!({ "ok": true, "detail": detail })))
 }
 
 pub async fn plaid_link_token(
@@ -82,7 +337,8 @@ pub async fn plaid_link_token(
             "APP_ENCRYPTION_KEY is required before linking a bank",
         ));
     }
-    let client = plaid_client(&state)?;
+    let ctx = state.ctx().await?;
+    let client = plaid_client(&state, &ctx).await?;
     let token = client
         .link_token(&u.0.id.to_string(), &state.config.app_url)
         .await
@@ -102,8 +358,8 @@ pub async fn plaid_exchange(
     Json(b): Json<Exchange>,
 ) -> Result<Json<Value>, ApiError> {
     owner_only(&u)?;
-    let client = plaid_client(&state)?;
     let ctx = state.ctx().await?;
+    let client = plaid_client(&state, &ctx).await?;
     let actor = u.actor();
     let (item, accounts) = services::plaid::link(&ctx, &actor, &client, &b.public_token).await?;
     let sync = services::plaid::sync_item(&ctx, &actor, &client, &item)
@@ -120,8 +376,8 @@ pub async fn plaid_sync(
     u: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
-    let client = plaid_client(&state)?;
     let ctx = state.ctx().await?;
+    let client = plaid_client(&state, &ctx).await?;
     let item = services::plaid::get_item(&ctx, id).await?;
     let s = services::plaid::sync_item(&ctx, &u.actor(), &client, &item).await?;
     let _ = crate::jobs::run_named(state.clone(), "process", "plaid-sync").await;
@@ -134,8 +390,8 @@ pub async fn plaid_remove(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     owner_only(&u)?;
-    let client = plaid_client(&state)?;
     let ctx = state.ctx().await?;
+    let client = plaid_client(&state, &ctx).await?;
     services::plaid::remove_item(&ctx, &u.actor(), &client, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -151,9 +407,10 @@ pub async fn privacy_sync(
     State(state): State<AppState>,
     _u: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    if state.config.privacy.is_none() {
+    let ctx = state.ctx().await?;
+    if integ::privacy(&ctx, &state.config).await?.is_none() {
         return Err(ApiError::bad_request(
-            "Privacy.com is not configured (PRIVACY_API_KEY)",
+            "Privacy.com is not configured: add your API key under More → Integrations",
         ));
     }
     let run = crate::jobs::run_named(state.clone(), "sync:privacy", "ui").await?;

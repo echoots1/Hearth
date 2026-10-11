@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AccountPicker, useAccountName } from "../../components/AccountPicker";
+import { ConfigForm } from "../../components/ConfigForm";
 import { Card, CardHead, Empty, ErrorNote, Field, Icon, PageHeader, Sheet, SheetActions, Spinner, Toggle } from "../../components/ui";
 import { api } from "../../lib/api";
 import { ago, longDate, shortDate } from "../../lib/dates";
@@ -12,12 +13,12 @@ type Preset = { name: string; mapping: Mapping; account_id?: string | null };
 type Batch = { id: string; account_id: string; filename: string; row_count: number; inserted_count: number; duplicate_count: number; rolled_back_at: string | null; created_at: string };
 type PlaidItem = { id: string; institution_name: string | null; status: string; last_error: string | null; last_synced_at: string | null; consecutive_failures: number; accounts: { id: string; name: string; type: string; mask: string | null; is_active: boolean; bank_balance_cents: number | null; bank_balance_as_of: string | null }[] };
 type JobRun = { status: string; started_at: string; finished_at: string | null; summary: unknown; error: string | null } | null;
+type Source = "app" | "env" | null;
 type Status = {
-  plaid: { configured: boolean; env: string | null; encryption_configured: boolean; items: PlaidItem[]; last_sync: JobRun };
-  privacy: { configured: boolean; env: string | null; cards: number; last_sync: JobRun };
+  encryption_configured: boolean;
+  plaid: { configured: boolean; source: Source; env: string | null; client_id: string | null; products: string[] | null; country_codes: string[] | null; encryption_configured: boolean; items: PlaidItem[]; last_sync: JobRun };
+  privacy: { configured: boolean; source: Source; env: string | null; cards: number; last_sync: JobRun };
   csv: { presets: Preset[]; batches: Batch[] };
-  ntfy: boolean;
-  smtp: boolean;
 };
 
 declare global {
@@ -43,10 +44,6 @@ export function Integrations() {
           <button type="button" className="btn-dark" onClick={() => setCsvOpen(true)}><Icon name="plus" size={16} /> Import a CSV</button>
         </div>
         {s.csv.batches.map((b) => <BatchRow key={b.id} b={b} />)}
-      </Card>
-      <Card className="flex flex-col gap-1 p-4">
-        <span className="text-[13px] font-extrabold">Notification channels</span>
-        <p className="text-muted text-[13px] font-semibold">Web Push: on per device under Notifications. ntfy: {s.ntfy ? "configured" : "not configured (NTFY_TOPIC)"}. Email: {s.smtp ? "configured" : "not configured (SMTP_HOST)"}.</p>
       </Card>
       <CsvWizard open={csvOpen} onClose={() => setCsvOpen(false)} presets={s.csv.presets} />
     </>
@@ -94,12 +91,38 @@ function PlaidCard({ s }: { s: Status }) {
     }
   };
   const p = s.plaid;
+  const [settingsOpen, setSettingsOpen] = useState(!p.configured);
+  const owner = me?.role === "owner";
   return (
     <Card className="divider overflow-hidden">
-      <CardHead title="Bank feeds (Plaid)" right={p.configured ? `${p.env} · ${p.items.length} linked` : "not configured"} />
-      {!p.configured ? (
-        <p className="text-muted p-4 text-[13px] font-semibold">Set PLAID_CLIENT_ID, PLAID_SECRET and APP_ENCRYPTION_KEY in the server's environment and restart. Transactions and balances then sync every hour.</p>
-      ) : (
+      <CardHead title="Bank feeds (Plaid)" right={p.configured ? `${p.env} · ${p.items.length} linked` : "not set up"} />
+      {(settingsOpen || !p.configured) && (
+        <div className="flex flex-col gap-3 p-4">
+          <p className="text-muted text-[13px] font-semibold">
+            Plaid connects your bank: transactions and balances sync every hour. Get a client ID and secret from the <a className="underline" href="https://dashboard.plaid.com" target="_blank" rel="noreferrer">Plaid dashboard</a>. Sandbox is free and uses fake banks; production needs an approved Plaid account.
+          </p>
+          <ConfigForm
+            name="plaid"
+            canEdit={owner}
+            configured={p.configured}
+            source={p.source}
+            hasSecret={p.source === "app"}
+            encryptionConfigured={s.encryption_configured}
+            testLabel="Check the keys"
+            onDone={() => setSettingsOpen(false)}
+            initial={{ client_id: p.client_id ?? "", secret: "", env: p.env ?? "sandbox", products: (p.products ?? ["transactions"]).join(", "), country_codes: (p.country_codes ?? ["US"]).join(", ") }}
+            fields={[
+              { key: "client_id", label: "Client ID", required: true },
+              { key: "secret", label: "Secret", secret: true, required: true, hint: "The secret for the environment chosen below." },
+              { key: "env", label: "Environment", type: "select", options: [{ value: "sandbox", label: "Sandbox (fake banks, free)" }, { value: "production", label: "Production" }] },
+              { key: "products", label: "Products", placeholder: "transactions", hint: "Comma-separated. Leave as is unless Plaid told you otherwise." },
+              { key: "country_codes", label: "Countries", placeholder: "US" },
+            ]}
+          />
+          {p.configured && owner && <button type="button" className="chip-light self-start" onClick={() => setSettingsOpen(false)}>Hide settings</button>}
+        </div>
+      )}
+      {p.configured && (
         <>
           {p.items.map((it) => (
             <div key={it.id} className="flex flex-col gap-2 px-4 py-3">
@@ -125,8 +148,9 @@ function PlaidCard({ s }: { s: Status }) {
           ))}
           <div className="flex flex-col gap-2 p-4">
             {!p.encryption_configured && <ErrorNote error="APP_ENCRYPTION_KEY is required before linking: access tokens are stored encrypted." />}
-            {me?.role === "owner" && <button type="button" className="btn-dark" disabled={busy || !p.encryption_configured} onClick={link}>{busy ? "Opening Plaid Link…" : "Link a bank"}</button>}
+            {owner && <button type="button" className="btn-dark" disabled={busy || !p.encryption_configured} onClick={link}>{busy ? "Opening Plaid Link…" : "Link a bank"}</button>}
             <p className="text-faint text-[11px] font-semibold">Plaid Link loads from cdn.plaid.com only when you tap the button.</p>
+            {owner && !settingsOpen && <button type="button" className="chip-light self-start" onClick={() => setSettingsOpen(true)}>Plaid settings</button>}
             <ErrorNote error={error || sync.error || remove.error} onClose={() => setError(null)} />
           </div>
         </>
@@ -136,24 +160,49 @@ function PlaidCard({ s }: { s: Status }) {
 }
 
 function PrivacyCard({ s }: { s: Status }) {
+  const { me } = useSession();
+  const owner = me?.role === "owner";
   const sync = useMutation(() => api.post("/api/privacy/sync", {}), ["integrations.", "accounts.", "transactions.", "alerts."]);
   const p = s.privacy;
+  const [settingsOpen, setSettingsOpen] = useState(!p.configured);
   return (
     <Card className="divider overflow-hidden">
-      <CardHead title="Virtual cards (Privacy.com)" right={p.configured ? `${p.env} · ${p.cards} card${p.cards === 1 ? "" : "s"}` : "not configured"} />
-      <div className="flex flex-col gap-2 p-4">
-        {p.configured ? (
+      <CardHead title="Virtual cards (Privacy.com)" right={p.configured ? `${p.env} · ${p.cards} card${p.cards === 1 ? "" : "s"}` : "not set up"} />
+      <div className="flex flex-col gap-3 p-4">
+        {p.configured && (
           <>
             <p className="text-muted text-[13px] font-semibold">Each card is an account; charges sync every few minutes and declines become alerts. Bank lines for card charges are shadow-linked so cash isn't counted twice.</p>
             <div className="flex items-center justify-between">
               <span className="text-muted text-[12px] font-semibold">{p.last_sync ? `last sync ${ago(p.last_sync.started_at)} · ${p.last_sync.status}` : "not synced yet"}</span>
-              <button type="button" className="chip-light" disabled={sync.busy} onClick={() => sync.run()}>Sync now</button>
+              <div className="flex gap-2">
+                {owner && !settingsOpen && <button type="button" className="chip-light" onClick={() => setSettingsOpen(true)}>Settings</button>}
+                <button type="button" className="chip-light" disabled={sync.busy} onClick={() => sync.run()}>Sync now</button>
+              </div>
             </div>
             {p.last_sync?.error && <ErrorNote error={p.last_sync.error} />}
             <ErrorNote error={sync.error} />
           </>
-        ) : (
-          <p className="text-muted text-[13px] font-semibold">Set PRIVACY_API_KEY (and PRIVACY_ENV) in the server's environment and restart.</p>
+        )}
+        {(settingsOpen || !p.configured) && (
+          <>
+            {!p.configured && <p className="text-muted text-[13px] font-semibold">Privacy.com virtual cards show up as accounts with their charges and declines. Create an API key under Account → API on privacy.com (a paid plan is required for API access).</p>}
+            <ConfigForm
+              name="privacy"
+              canEdit={owner}
+              configured={p.configured}
+              source={p.source}
+              hasSecret={p.source === "app"}
+              encryptionConfigured={s.encryption_configured}
+              testLabel="Check the key"
+              onDone={() => setSettingsOpen(false)}
+              initial={{ api_key: "", env: p.env ?? "production" }}
+              fields={[
+                { key: "api_key", label: "API key", secret: true, required: true },
+                { key: "env", label: "Environment", type: "select", options: [{ value: "production", label: "Production" }, { value: "sandbox", label: "Sandbox" }] },
+              ]}
+            />
+            {p.configured && owner && <button type="button" className="chip-light self-start" onClick={() => setSettingsOpen(false)}>Hide settings</button>}
+          </>
         )}
       </div>
     </Card>

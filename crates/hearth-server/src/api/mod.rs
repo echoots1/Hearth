@@ -20,7 +20,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::Request,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -108,6 +108,11 @@ pub fn router(state: AppState) -> Router {
         .route("/chat/threads/{id}/messages", post(chat::send))
         .route("/assistant/pass", post(chat::pass_now))
         .route("/integrations/status", get(integrations::status))
+        .route(
+            "/integrations/{name}",
+            put(integrations::configure).delete(integrations::unconfigure),
+        )
+        .route("/integrations/{name}/test", post(integrations::test))
         .route("/plaid/link-token", post(integrations::plaid_link_token))
         .route("/plaid/exchange", post(integrations::plaid_exchange))
         .route("/plaid/items/{id}/sync", post(integrations::plaid_sync))

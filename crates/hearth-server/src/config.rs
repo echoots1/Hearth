@@ -6,6 +6,7 @@
 use std::env;
 
 use anyhow::{Context, bail};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -92,36 +93,63 @@ pub struct JobsConfig {
     pub evaluate_minutes: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaidConfig {
     pub client_id: String,
     pub secret: String,
     pub env: String,
+    #[serde(default = "default_plaid_products")]
     pub products: Vec<String>,
+    #[serde(default = "default_country_codes")]
     pub country_codes: Vec<String>,
 }
 
-#[derive(Clone, Debug)]
+fn default_plaid_products() -> Vec<String> {
+    vec!["transactions".into()]
+}
+fn default_country_codes() -> Vec<String> {
+    vec!["US".into()]
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PrivacyConfig {
     pub api_key: String,
+    #[serde(default = "default_sandbox")]
     pub env: String,
 }
 
-#[derive(Clone, Debug)]
+fn default_sandbox() -> String {
+    "sandbox".into()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NtfyConfig {
+    #[serde(default = "default_ntfy_url")]
     pub url: String,
     pub topic: String,
+    #[serde(default)]
     pub token: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+fn default_ntfy_url() -> String {
+    "https://ntfy.sh".into()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SmtpConfig {
     pub host: String,
+    #[serde(default = "default_smtp_port")]
     pub port: u16,
+    #[serde(default)]
     pub user: Option<String>,
+    #[serde(default)]
     pub pass: Option<String>,
     pub from: String,
     pub alert_to: String,
+}
+
+fn default_smtp_port() -> u16 {
+    587
 }
 
 fn var(name: &str) -> Option<String> {
