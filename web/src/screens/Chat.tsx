@@ -107,7 +107,7 @@ export function Chat() {
         <ErrorNote error={error} onClose={() => setError(null)} />
         <div ref={bottom} />
       </div>
-      <div className="bg-ground sticky bottom-24 flex gap-2 pt-2">
+      <div className="bg-ground sticky bottom-24 flex gap-2 pt-2 lg:bottom-0 lg:pb-4">
         <textarea
           className="field min-h-11 flex-1 resize-none"
           rows={1}
