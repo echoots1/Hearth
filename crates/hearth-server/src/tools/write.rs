@@ -1418,7 +1418,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "alerts.resolve",
-            "Mark an alert done with a short resolution.",
+            "Mark an alert done with a short resolution. It stays done while its condition persists; only a condition that clears and comes back raises a new alert.",
             ResolveArgs,
             writes = true,
             area = None,

@@ -155,14 +155,34 @@ pub async fn reopen(ctx: &Ctx, actor: &Actor, id: Uuid) -> Result<Alert> {
 pub struct UpsertSummary {
     pub created: usize,
     pub refreshed: usize,
+    /// Candidates whose alert a person already marked done and whose
+    /// condition has not cleared since: left done, not raised again.
+    pub suppressed: usize,
+}
+
+/// Whether a done alert's condition has persisted since a person resolved
+/// it. `last_seen` is when the evaluator last produced the candidate;
+/// `previous_run` is when the previous successful run of the caller
+/// started. The previous run saw the candidate iff it refreshed
+/// `last_seen` after it started, so a done alert seen then is a condition
+/// that never went away; one not seen then cleared and has come back.
+/// With no previous run nothing can have cleared it.
+pub fn still_persisting(last_seen: DateTime<Utc>, previous_run: Option<DateTime<Utc>>) -> bool {
+    previous_run.is_none_or(|started| last_seen >= started)
 }
 
 /// Materialize evaluator output: insert new live alerts by dedupe key, refresh
 /// `last_seen_at`/detail/amount on existing ones. Never touches `status`.
+///
+/// A done alert stays done while its condition persists: the candidate only
+/// advances the done row's `last_seen_at`. Once a run has gone by without
+/// the candidate (judged by `previous_run`, the start of the caller's last
+/// successful run) a reappearance is a new alert.
 pub async fn upsert_candidates(
     ctx: &Ctx,
     source: &str,
     candidates: &[AlertCandidate],
+    previous_run: Option<DateTime<Utc>>,
 ) -> Result<UpsertSummary> {
     let mut summary = UpsertSummary::default();
     for c in candidates {
@@ -171,6 +191,17 @@ pub async fn upsert_candidates(
             .bind(&c.dedupe_key)
             .fetch_optional(&ctx.pool)
             .await?;
+        let done: Option<(Uuid, DateTime<Utc>)> = match existing {
+            Some(_) => None,
+            None => sqlx::query_as(
+                "select id, last_seen_at from alerts where household_id = $1 and dedupe_key = $2 and status = 'done'
+                 order by last_seen_at desc limit 1",
+            )
+            .bind(ctx.household_id)
+            .bind(&c.dedupe_key)
+            .fetch_optional(&ctx.pool)
+            .await?,
+        };
         match existing {
             Some((id,)) => {
                 sqlx::query(
@@ -185,6 +216,15 @@ pub async fn upsert_candidates(
                 .execute(&ctx.pool)
                 .await?;
                 summary.refreshed += 1;
+            }
+            None if done.is_some_and(|(_, seen)| still_persisting(seen, previous_run)) => {
+                let (id, _) = done.expect("checked above");
+                sqlx::query("update alerts set last_seen_at = $2 where id = $1")
+                    .bind(id)
+                    .bind(ctx.now)
+                    .execute(&ctx.pool)
+                    .await?;
+                summary.suppressed += 1;
             }
             None => {
                 sqlx::query(
@@ -227,4 +267,23 @@ pub async fn counts(ctx: &Ctx) -> Result<(i64, i64, i64)> {
     .fetch_one(&ctx.pool)
     .await?;
     Ok(row)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(secs: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_700_000_000 + secs, 0).unwrap()
+    }
+
+    #[test]
+    fn done_alert_stays_done_while_its_condition_persists() {
+        // Previous run started at 100 and saw the candidate at 101.
+        assert!(still_persisting(t(101), Some(t(100))));
+        // The previous run started at 100 and did not see it: last seen 50.
+        assert!(!still_persisting(t(50), Some(t(100))));
+        // Nothing has run since it was resolved, so nothing cleared it.
+        assert!(still_persisting(t(50), None));
+    }
 }

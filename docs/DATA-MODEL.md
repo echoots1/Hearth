@@ -178,7 +178,10 @@ detection). Strategy and extra payment live in `settings.debt_strategy`.
 `account_id`, `planned_item_id`), `context` jsonb, `first_seen_at`,
 `last_seen_at`, `notified_at`, `last_nudged_at`, `nudge_count`,
 `snoozed_until`, `acked_by`, `acked_at`, `resolved_at`. Unique live
-`(household_id, dedupe_key)` where status ≠ done.
+`(household_id, dedupe_key)` where status ≠ done. `last_seen_at` keeps
+advancing on a done alert while `evaluate` still sees its condition; a
+candidate whose done alert the previous run saw is left done, one it did
+not see is a new row.
 
 **questions** — `kind` (ask | proposal), `asked_by`, `question`, `options`
 jsonb, `proposal` jsonb (`{ tool, args, area, summary }`; required for
