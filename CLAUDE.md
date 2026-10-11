@@ -14,33 +14,45 @@ let Claude tend it over MCP. `docs/ARCHITECTURE.md` is the design;
   (fmt, clippy with `-D warnings`, tests, web lint/build, a Docker build)
   must be green. Nobody pushes commits straight to `main`; the only direct
   push is a release tag.
-- **Two image channels** on `ghcr.io/echoots1/hearth`:
+- **Three image channels** on `ghcr.io/echoots1/hearth`:
   - `:main` and `:sha-<short>`: the **development** build. Published by a
     push to `main` that touches `crates/`, `web/`, `Cargo.toml`,
     `Cargo.lock`, `Dockerfile`, `.dockerignore` or `image.yml`. Docs,
     compose, deploy files, scripts and the Dependabot config do not build.
+  - `:qa` and `:X.Y.Z-rc.N`: the **QA** channel. Published only by a
+    `vX.Y.Z-rc.N` tag (a release candidate; a GitHub pre-release). A QA
+    copy of the app pulls `qa`.
   - `:latest`, `:X.Y.Z`, `:X.Y`: the **release** channel. Published only by
     a `vX.Y.Z` tag. The compose files (root and `deploy/truenas/`) pull
-    `latest`, so **a merge to `main` never reaches a production install
-    until someone cuts a release.** Never retag `latest` by hand.
-- **Cutting a release** (any agent asked to "release" or "ship" does this):
+    `latest`, so **a merge to `main` never reaches a QA or production
+    install until someone cuts a candidate or a release.** Never retag
+    `qa` or `latest` by hand.
+- **Cutting a candidate or a release** (any agent asked to "put this on
+  QA", "release" or "ship" does this):
   1. PR that bumps the version in **both** `Cargo.toml`
-     (`[workspace.package] version`) and `web/package.json`, plus a line in
-     the PR about what the release contains. Merge it green.
+     (`[workspace.package] version`) and `web/package.json` to X.Y.Z,
+     plus a line in the PR about what the version contains. Merge it
+     green. One bump serves every candidate and the release of that
+     version.
   2. Dispatch the Image workflow on `main` with the version: from a cloud
      session use the GitHub tool `actions_run_trigger` (workflow
-     `image.yml`, ref `main`, inputs `{"release": "X.Y.Z"}`); from a
-     terminal `gh workflow run image.yml --ref main -f release=X.Y.Z`; or
-     Actions → Image → Run workflow in the browser. The run checks the
-     version against both manifests, creates and pushes the `vX.Y.Z` tag
-     itself, builds `:X.Y.Z`, `:X.Y` and `:latest`, and publishes the
-     GitHub Release with generated notes. A person with push rights can
-     instead run `scripts/release.sh X.Y.Z`, which pushes the tag by hand
-     and triggers the same jobs. (Cloud sessions cannot push tags: their
-     credentials are scoped to one branch, which is why the dispatch path
-     exists.)
+     `image.yml`, ref `main`, inputs `{"release": "X.Y.Z-rc.1"}` for QA
+     or `{"release": "X.Y.Z"}` for production); from a terminal
+     `gh workflow run image.yml --ref main -f release=…`; or Actions →
+     Image → Run workflow in the browser. The run checks X.Y.Z against
+     both manifests, creates and pushes the tag itself, builds, and
+     publishes the release entry: a candidate gives `:X.Y.Z-rc.N` and
+     `:qa` with a pre-release; a release gives `:X.Y.Z`, `:X.Y` and
+     `:latest` with a GitHub Release. A person with push rights can
+     instead run `scripts/release.sh <version>`, which pushes the tag by
+     hand and triggers the same jobs. (Cloud sessions cannot push tags:
+     their credentials are scoped to one branch, which is why the
+     dispatch path exists.)
   3. Watch the Image run finish (`actions_list`, then the jobs); then tell
-     the person the version is live and link the release.
+     the person the version is on QA or live, and link the release entry.
+  4. **Promoting**: when a candidate checks out on QA, dispatch the plain
+     `X.Y.Z` on the same commit. A fix after a candidate is a normal PR,
+     then the next `-rc.N`.
   A migration in the release means the notes should say "back up first":
   migrations are forward-only.
 - **Dependabot** proposes patch updates for Cargo (0.x minors are breaking),

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Cut a release: tag the commit at the tip of main as vX.Y.Z.
+# Cut a release or a QA candidate: tag the commit at the tip of main.
 #
-#   scripts/release.sh 0.2.0
+#   scripts/release.sh 0.2.0-rc.1   # candidate: publishes :0.2.0-rc.1 and :qa, a pre-release
+#   scripts/release.sh 0.2.0        # release:   publishes :0.2.0, :0.2 and :latest
 #
 # The version bump itself goes through a normal PR first (Cargo.toml
 # [workspace.package] version and web/package.json "version"), so CI has
@@ -19,7 +20,13 @@ fail() { printf 'release: %s\n' "$1" >&2; exit 1; }
 
 v="${1:-}"
 v="${v#v}"
-[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "usage: scripts/release.sh X.Y.Z"
+if [[ "$v" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$ ]]; then
+  base="${BASH_REMATCH[1]}"; kind="QA candidate"
+elif [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  base="$v"; kind="release"
+else
+  fail "usage: scripts/release.sh X.Y.Z  or  scripts/release.sh X.Y.Z-rc.N"
+fi
 
 [[ "$(git rev-parse --abbrev-ref HEAD)" == "main" ]] || fail "switch to main first"
 git diff --quiet && git diff --cached --quiet || fail "the working tree has changes; commit or stash them"
@@ -29,8 +36,8 @@ git fetch origin main -q
 
 cargo_v="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
 npm_v="$(python3 -c 'import json; print(json.load(open("web/package.json"))["version"])')"
-[[ "$cargo_v" == "$v" && "$npm_v" == "$v" ]] \
-  || fail "Cargo.toml says $cargo_v and web/package.json says $npm_v; bump both to $v in a PR and merge it first"
+[[ "$cargo_v" == "$base" && "$npm_v" == "$base" ]] \
+  || fail "Cargo.toml says $cargo_v and web/package.json says $npm_v; bump both to $base in a PR and merge it first"
 
 git rev-parse -q --verify "refs/tags/v$v" >/dev/null && fail "tag v$v already exists"
 git ls-remote --exit-code --tags origin "v$v" >/dev/null 2>&1 && fail "tag v$v already exists on origin"
@@ -46,5 +53,9 @@ fi
 
 git tag -a "v$v" -m "Hearth v$v"
 git push origin "v$v"
-echo "tagged v$v; the Image workflow publishes :$v, :${v%.*} and :latest and creates the GitHub Release:"
+if [[ "$kind" == "release" ]]; then
+  echo "tagged v$v; the Image workflow publishes :$v, :${v%.*} and :latest and creates the GitHub Release:"
+else
+  echo "tagged v$v; the Image workflow publishes :$v and :qa and creates a GitHub pre-release:"
+fi
 echo "  https://github.com/$(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')/actions"
