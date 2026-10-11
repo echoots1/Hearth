@@ -34,6 +34,16 @@ pub struct TxnForEstimate {
     pub duplicate: bool,
 }
 
+/// Which balance an account's estimate runs from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BalanceAnchor {
+    /// A person read it off the bank and typed it in.
+    Reported,
+    /// A sync (Plaid) fetched it.
+    Bank,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountEstimate {
     pub account_id: Uuid,
@@ -41,20 +51,45 @@ pub struct AccountEstimate {
     pub include_in_cash: bool,
     pub reported_balance_cents: Option<Cents>,
     pub reported_balance_as_of: Option<DateTime<Utc>>,
-    /// Household-local date of the as-of instant.
-    pub as_of_date: Option<NaiveDate>,
-    /// Signed sum of transactions counted since the as-of (posted after `as_of_date`, plus pending).
-    pub since_cents: Cents,
-    pub since_count: usize,
-    /// `reported + since`; `None` when no balance has ever been reported.
-    pub estimate_cents: Option<Cents>,
     pub bank_balance_cents: Option<Cents>,
     pub bank_balance_as_of: Option<DateTime<Utc>>,
+    /// The balance the estimate runs from: the newer of the reported and the
+    /// bank balance. `None` when the account has neither.
+    pub anchor: Option<BalanceAnchor>,
+    pub anchor_balance_cents: Option<Cents>,
+    pub anchor_as_of: Option<DateTime<Utc>>,
+    /// Household-local date of the anchor's as-of instant.
+    pub as_of_date: Option<NaiveDate>,
+    /// Signed sum of transactions counted since the anchor (posted after `as_of_date`, plus pending).
+    pub since_cents: Cents,
+    pub since_count: usize,
+    /// `anchor + since`; `None` when the account has no dated balance at all.
+    pub estimate_cents: Option<Cents>,
+    /// Age of the anchor balance in whole days as of `today`.
+    pub anchor_age_days: Option<i64>,
     /// Age of the reported balance in whole days as of `today`.
     pub reported_age_days: Option<i64>,
 }
 
-/// Running estimate for one account.
+/// The balance an estimate runs from: the newer of the person-reported and the
+/// bank-synced balance. A balance without an as-of instant cannot anchor. On a
+/// tie the reported one wins: a person typed it on purpose.
+pub fn anchor(acct: &AccountForEstimate) -> Option<(BalanceAnchor, Cents, DateTime<Utc>)> {
+    let reported = acct
+        .reported_balance_cents
+        .zip(acct.reported_balance_as_of)
+        .map(|(c, t)| (BalanceAnchor::Reported, c, t));
+    let bank = acct
+        .bank_balance_cents
+        .zip(acct.bank_balance_as_of)
+        .map(|(c, t)| (BalanceAnchor::Bank, c, t));
+    match (reported, bank) {
+        (Some(r), Some(b)) => Some(if b.2 > r.2 { b } else { r }),
+        (r, b) => r.or(b),
+    }
+}
+
+/// Running estimate for one account, run forward from its anchor balance.
 ///
 /// Counts transactions with `date > as_of_date` **or** `pending`. Deleted rows
 /// never count, nor do duplicates: when a shadow row and the row it shadows
@@ -67,7 +102,8 @@ pub fn account_estimate<'a>(
     tz: Tz,
     today: NaiveDate,
 ) -> AccountEstimate {
-    let as_of_date = acct.reported_balance_as_of.map(|t| local_date(tz, t));
+    let anchor = anchor(acct);
+    let as_of_date = anchor.map(|(_, _, t)| local_date(tz, t));
     let mut since = Cents::ZERO;
     let mut count = 0usize;
     if let Some(as_of) = as_of_date {
@@ -87,13 +123,19 @@ pub fn account_estimate<'a>(
         include_in_cash: acct.include_in_cash,
         reported_balance_cents: acct.reported_balance_cents,
         reported_balance_as_of: acct.reported_balance_as_of,
+        bank_balance_cents: acct.bank_balance_cents,
+        bank_balance_as_of: acct.bank_balance_as_of,
+        anchor: anchor.map(|(k, _, _)| k),
+        anchor_balance_cents: anchor.map(|(_, c, _)| c),
+        anchor_as_of: anchor.map(|(_, _, t)| t),
         as_of_date,
         since_cents: since,
         since_count: count,
-        estimate_cents: acct.reported_balance_cents.map(|b| b + since),
-        bank_balance_cents: acct.bank_balance_cents,
-        bank_balance_as_of: acct.bank_balance_as_of,
-        reported_age_days: as_of_date.map(|d| days_between(d, today)),
+        estimate_cents: anchor.map(|(_, b, _)| b + since),
+        anchor_age_days: as_of_date.map(|d| days_between(d, today)),
+        reported_age_days: acct
+            .reported_balance_as_of
+            .map(|t| days_between(local_date(tz, t), today)),
     }
 }
 
@@ -336,11 +378,13 @@ mod tests {
         assert_eq!(e.since_cents, Cents::dollars(450));
         assert_eq!(e.since_count, 3);
         assert_eq!(e.estimate_cents, Some(Cents::dollars(1450)));
+        assert_eq!(e.anchor, Some(BalanceAnchor::Reported));
+        assert_eq!(e.anchor_age_days, Some(3));
         assert_eq!(e.reported_age_days, Some(3));
     }
 
     #[test]
-    fn estimate_none_without_reported_balance() {
+    fn estimate_none_without_a_dated_balance() {
         let id = Uuid::new_v4();
         let acct = AccountForEstimate {
             id,
@@ -352,8 +396,83 @@ mod tests {
             bank_balance_as_of: None,
         };
         let e = account_estimate(&acct, &[], chicago(), d("2026-01-01"));
+        assert_eq!(e.anchor, None);
         assert_eq!(e.estimate_cents, None);
         assert_eq!(household_estimate(&[e]), Cents::ZERO);
+    }
+
+    #[test]
+    fn bank_balance_alone_anchors_the_estimate() {
+        let id = Uuid::new_v4();
+        let synced = Utc.with_ymd_and_hms(2026, 3, 11, 15, 0, 0).unwrap();
+        let acct = AccountForEstimate {
+            id,
+            name: "Plaid Checking".into(),
+            include_in_cash: true,
+            reported_balance_cents: None,
+            reported_balance_as_of: None,
+            bank_balance_cents: Some(Cents::dollars(800)),
+            bank_balance_as_of: Some(synced),
+        };
+        let txns = vec![
+            TxnForEstimate {
+                account_id: id,
+                date: d("2026-03-12"),
+                amount_cents: Cents::dollars(-25),
+                pending: false,
+                deleted: false,
+                duplicate: false,
+            },
+            TxnForEstimate {
+                account_id: id,
+                date: d("2026-03-11"),
+                amount_cents: Cents::dollars(-10),
+                pending: true,
+                deleted: false,
+                duplicate: false,
+            },
+        ];
+        let e = account_estimate(&acct, &txns, chicago(), d("2026-03-13"));
+        assert_eq!(e.anchor, Some(BalanceAnchor::Bank));
+        assert_eq!(e.anchor_balance_cents, Some(Cents::dollars(800)));
+        assert_eq!(e.as_of_date, Some(d("2026-03-11")));
+        assert_eq!(e.since_cents, Cents::dollars(-35));
+        assert_eq!(e.estimate_cents, Some(Cents::dollars(765)));
+        assert_eq!(e.anchor_age_days, Some(2));
+        assert_eq!(e.reported_age_days, None);
+        assert_eq!(household_estimate(&[e]), Cents::dollars(765));
+    }
+
+    #[test]
+    fn newer_balance_wins_and_a_tie_goes_to_reported() {
+        let id = Uuid::new_v4();
+        let base = AccountForEstimate {
+            id,
+            name: "x".into(),
+            include_in_cash: true,
+            reported_balance_cents: Some(Cents::dollars(100)),
+            reported_balance_as_of: Some(Utc.with_ymd_and_hms(2026, 3, 10, 12, 0, 0).unwrap()),
+            bank_balance_cents: Some(Cents::dollars(200)),
+            bank_balance_as_of: Some(Utc.with_ymd_and_hms(2026, 3, 11, 12, 0, 0).unwrap()),
+        };
+        let e = account_estimate(&base, &[], chicago(), d("2026-03-12"));
+        assert_eq!(e.anchor, Some(BalanceAnchor::Bank));
+        assert_eq!(e.estimate_cents, Some(Cents::dollars(200)));
+
+        let reported_later = AccountForEstimate {
+            reported_balance_as_of: Some(Utc.with_ymd_and_hms(2026, 3, 11, 18, 0, 0).unwrap()),
+            ..base.clone()
+        };
+        let e = account_estimate(&reported_later, &[], chicago(), d("2026-03-12"));
+        assert_eq!(e.anchor, Some(BalanceAnchor::Reported));
+        assert_eq!(e.estimate_cents, Some(Cents::dollars(100)));
+
+        let tie = AccountForEstimate {
+            reported_balance_as_of: base.bank_balance_as_of,
+            ..base.clone()
+        };
+        let e = account_estimate(&tie, &[], chicago(), d("2026-03-12"));
+        assert_eq!(e.anchor, Some(BalanceAnchor::Reported));
     }
 
     fn cat(name: &str, plan: i64, spent: i64, everyday: bool) -> CategoryForLowPoint {

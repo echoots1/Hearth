@@ -205,9 +205,14 @@ export type BalanceOverview = {
     reported_age_days: number | null;
     bank_balance_cents: number | null;
     bank_balance_as_of: string | null;
+    /** The balance the estimate runs from: the newer of reported and bank. */
+    anchor: "reported" | "bank" | null;
+    anchor_balance_cents: number | null;
+    anchor_as_of: string | null;
+    anchor_age_days: number | null;
     since_cents: number;
     since_count: number;
-    estimate_cents: number;
+    estimate_cents: number | null;
   }[];
   household_estimate_cents: number;
   cash_floor_cents: number;

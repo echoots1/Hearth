@@ -38,7 +38,7 @@ Eleven nouns. Everything on screen and every MCP tool is made of these.
 
 | Noun | One line | Lives on screen as |
 | --- | --- | --- |
-| **Account** | A place money sits: checking, savings, cash, card. Has a user-reported balance with an as-of time, and optionally a bank-reported one. | Cash card, More → Accounts |
+| **Account** | A place money sits: checking, savings, cash, card. Has a user-reported balance with an as-of time, and optionally a bank-synced one; the newer of the two anchors the running estimate. | Cash card, More → Accounts |
 | **Transaction** | One movement of money: date, description, signed amount (negative = out), source, category, pending flag, note. | Category detail, Activity |
 | **Category** | A bucket with a sign (income/spend), a group, a standing note, flags (`everyday`, `due_day`), and a **plan** made of phases. | Budget list rows |
 | **Plan phase** | "From month M, plan N per month." The current phase is the plan; the next phase is the "after the change" column. | Category detail → Plan |

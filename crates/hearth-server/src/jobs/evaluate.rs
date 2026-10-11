@@ -157,6 +157,7 @@ pub async fn run(state: AppState) -> anyhow::Result<Value> {
             name: a.name,
             include_in_cash: a.include_in_cash,
             reported_balance_as_of: a.reported_balance_as_of,
+            bank_balance_as_of: a.bank_balance_as_of,
         })
         .collect();
 

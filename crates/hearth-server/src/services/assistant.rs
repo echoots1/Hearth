@@ -362,6 +362,9 @@ pub async fn work(ctx: &Ctx) -> Result<WorkQueue> {
         .filter(|a| a.include_in_cash)
         .filter(|a| {
             a.reported_balance_as_of
+                .into_iter()
+                .chain(a.bank_balance_as_of)
+                .max()
                 .is_none_or(|t| (ctx.now - t).num_days() >= settings.stale_balance_days)
         })
         .map(|a| a.name.clone())

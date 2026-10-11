@@ -16,6 +16,14 @@ export function accountTypeLabel(type: string): string {
   return ACCOUNT_TYPES.find((t) => t.v === type)?.label ?? type;
 }
 
+/** The balance Hearth runs from: the newer of what a person reported and what a sync fetched. */
+function latestBalance(a: Account): { cents: number; as_of: string; kind: "reported" | "bank" } | null {
+  const reported = a.reported_balance_cents != null && a.reported_balance_as_of ? { cents: a.reported_balance_cents, as_of: a.reported_balance_as_of, kind: "reported" as const } : null;
+  const bank = a.bank_balance_cents != null && a.bank_balance_as_of ? { cents: a.bank_balance_cents, as_of: a.bank_balance_as_of, kind: "bank" as const } : null;
+  if (reported && bank) return bank.as_of > reported.as_of ? bank : reported;
+  return reported ?? bank;
+}
+
 export function Accounts() {
   const accounts = useAccounts(true);
   const [add, setAdd] = useState(false);
@@ -38,8 +46,8 @@ export function Accounts() {
               </span>
             </div>
             <div className="flex shrink-0 flex-col items-end">
-              <span className="text-[15px] font-extrabold">{money(a.reported_balance_cents)}</span>
-              <span className="text-faint text-[11px] font-semibold">{a.reported_balance_as_of ? ago(a.reported_balance_as_of) : "no balance yet"}</span>
+              <span className="text-[15px] font-extrabold">{money(latestBalance(a)?.cents)}</span>
+              <span className="text-faint text-[11px] font-semibold">{(() => { const b = latestBalance(a); return b ? `${b.kind} ${ago(b.as_of)}` : "no balance yet"; })()}</span>
             </div>
           </button>
         ))}

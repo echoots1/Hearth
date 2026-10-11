@@ -238,7 +238,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "balance.overview",
-            "Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, everyday pace, planned items) and headroom over the cash floor.",
+            "Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, everyday pace, planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance.",
             Empty,
             writes = false,
             area = None,
