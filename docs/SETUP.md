@@ -83,7 +83,9 @@ has every setting written inline.
    via YAML**.
 2. Name the app `hearth`, paste the file, and edit the lines marked `CHANGE`:
    `APP_URL`, the two secrets, the database password (in both places), and the
-   host port if 3000 is taken.
+   host port if 3000 is taken (TrueNAS reports `port is already allocated`
+   at install time; pick another, such as `3456`, and use it in `APP_URL`
+   too).
 3. **Install.** The app shows healthy once Postgres is up and Hearth has run
    its migrations.
 
@@ -365,6 +367,7 @@ Budget screen), a daily pass Hearth runs itself at the time you set, and
 | `401` from `/mcp` | Key missing, mistyped, or revoked. Create a new one. |
 | Push toggle fails | Not HTTPS, not installed to the home screen (iPhone), or `APP_ENCRYPTION_KEY` unset. |
 | Nothing is syncing | **More → Jobs** shows every job's last run, summary or error. `JOBS_ENABLED=false` turns the scheduler off on purpose. |
+| `Bind for …:3000 failed: port is already allocated` | Another app on the host owns that port. Change the left side of the `ports:` line (for example `"3456:3000"`) and put the same port in `APP_URL` (`http://<host>:3456`) so links and the connector URL match. |
 | Container restarts in a loop | `docker compose logs app`. Usual causes: `APP_SECRET` shorter than 32 characters, Plaid keys set without `APP_ENCRYPTION_KEY`, or Postgres not ready yet (it settles within a minute). |
 | `429 Too Many Requests` | Sign-in allows 10 attempts per 5 minutes per address and `/mcp` 300 requests per minute. Behind a proxy without `TRUST_PROXY=true` every client shares the proxy's address. |
 | Plaid link fails before Link opens | `APP_ENCRYPTION_KEY` unset, or `PLAID_ENV` doesn't match the key pair. |
