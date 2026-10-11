@@ -61,6 +61,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
           outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          # Keep the manifest list to the two real platforms (no unknown/unknown attestation entries).
+          provenance: false
           cache-from: type=gha,scope=${{ steps.platform.outputs.slug }}
           cache-to: type=gha,mode=max,scope=${{ steps.platform.outputs.slug }}
 
