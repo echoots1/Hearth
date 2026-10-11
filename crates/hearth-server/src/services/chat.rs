@@ -18,6 +18,14 @@ use crate::tools::{self, ToolCtx};
 
 const MAX_ITERATIONS: usize = 16;
 const MAX_RESULT_CHARS: usize = 12_000;
+/// Output cap per API call. A pass categorizes one transaction per tool call
+/// and may issue dozens in one response, so this has to hold them all; the
+/// cap is not a cost (only generated tokens are billed).
+const MAX_TOKENS: u32 = 16_000;
+/// How many times one turn may pick up after the model hit `MAX_TOKENS`.
+const MAX_CONTINUATIONS: usize = 3;
+const CONTINUE_PROMPT: &str = "You ran out of room. Continue exactly where you left off without repeating what you already said.";
+const CUT_OFF_RESULT: &str = "This call was cut off by the output limit and did not run. Call it again, fewer calls at a time.";
 
 /// The Claude client for this household, or why there isn't one.
 pub async fn client(ctx: &Ctx) -> Result<(Claude, hearth_core::settings::AssistantSettings)> {
@@ -108,7 +116,30 @@ pub struct Turn {
     pub messages: Vec<Value>,
 }
 
+/// The `tool_use` blocks of a response.
+fn tool_uses(content: &[Value]) -> Vec<&Value> {
+    content
+        .iter()
+        .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+        .collect()
+}
+
+/// A response the output cap cut off mid tool call carries tool inputs that may
+/// be truncated, so none of them runs; each gets an error result instead and the
+/// model gets to redo them. Every `tool_use` needs a `tool_result` or the API
+/// rejects the next request.
+fn cut_off_results(content: &[Value]) -> Vec<Value> {
+    tool_uses(content)
+        .into_iter()
+        .map(|b| {
+            let id = b.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+            json!({ "type": "tool_result", "tool_use_id": id, "content": CUT_OFF_RESULT, "is_error": true })
+        })
+        .collect()
+}
+
 /// Run the model until it stops asking for tools. `history` is the thread so far.
+/// `purpose` is `chat` (a person is reading) or `pass` (nobody is).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_turn(
     state: &AppState,
@@ -119,7 +150,6 @@ pub async fn run_turn(
     purpose: &str,
     system: &str,
     history: &[Value],
-    max_tokens: u32,
 ) -> Result<Turn> {
     let tool_defs = claude::tool_definitions();
     let mut messages: Vec<Value> = history.to_vec();
@@ -128,6 +158,9 @@ pub async fn run_turn(
     let mut cost = Cents::ZERO;
     let mut text = String::new();
     let mut stop = String::new();
+    let mut continuations = 0usize;
+    // The last response was cut off mid-sentence: glue the next one on.
+    let mut mid_sentence = false;
     let assistant = Actor::Assistant {
         key_id: None,
         name: "api".into(),
@@ -141,7 +174,7 @@ pub async fn run_turn(
                 system,
                 messages: &messages,
                 tools: &tool_defs,
-                max_tokens,
+                max_tokens: MAX_TOKENS,
             })
             .await
             .map_err(Error::Other)?;
@@ -169,21 +202,36 @@ pub async fn run_turn(
             if block.get("type").and_then(|t| t.as_str()) == Some("text")
                 && let Some(t) = block.get("text").and_then(|t| t.as_str())
             {
-                if !text.is_empty() {
+                if !text.is_empty() && !mid_sentence {
                     text.push('\n');
                 }
+                mid_sentence = false;
                 text.push_str(t);
             }
+        }
+        if stop == "max_tokens" {
+            // The output cap cut the response off. Let the model pick up again a
+            // bounded number of times: a pass has nobody to ask it to continue.
+            continuations += 1;
+            if continuations > MAX_CONTINUATIONS {
+                break;
+            }
+            let cut = cut_off_results(&res.content);
+            let user_msg = if cut.is_empty() {
+                mid_sentence = true;
+                json!({ "role": "user", "content": [{ "type": "text", "text": CONTINUE_PROMPT }] })
+            } else {
+                json!({ "role": "user", "content": cut })
+            };
+            messages.push(user_msg.clone());
+            appended.push(user_msg);
+            continue;
         }
         if stop != "tool_use" {
             break;
         }
         let mut results = Vec::new();
-        for block in res
-            .content
-            .iter()
-            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
-        {
+        for block in tool_uses(&res.content) {
             let id = block
                 .get("id")
                 .and_then(|v| v.as_str())
@@ -231,7 +279,17 @@ pub async fn run_turn(
         appended.push(user_msg);
     }
     if stop == "max_tokens" {
-        text.push_str("\n\n(Claude ran out of room; ask it to continue.)");
+        text.push_str(if purpose == "chat" {
+            "\n\n(Claude ran out of room; ask it to continue.)"
+        } else {
+            "\n\n(Claude ran out of room before finishing; the next pass picks up where this one stopped.)"
+        });
+    }
+    if stop == "tool_use" {
+        // The iteration cap ended the loop with tool results the model never saw.
+        text.push_str(&format!(
+            "\n\n(Claude stopped after {MAX_ITERATIONS} rounds of tool calls; the rest waits for the next pass or message.)"
+        ));
     }
     if stop == "refusal" {
         text.push_str("\n\n(Claude declined to continue that request.)");
@@ -364,7 +422,6 @@ pub async fn send(
         "chat",
         &system,
         &all,
-        4096,
     )
     .await
     {
@@ -429,7 +486,6 @@ Finish by calling assistant__summary_write with two or three plain lines about w
         "pass",
         &system,
         &history,
-        2048,
     )
     .await?;
     if !turn
@@ -480,4 +536,24 @@ pub async fn pass_due(ctx: &Ctx) -> Result<bool> {
     .fetch_optional(&ctx.pool)
     .await?;
     Ok(last.is_none_or(|(t,)| t < due_at))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cut_off_tool_calls_get_error_results_not_runs() {
+        let content = vec![
+            json!({ "type": "text", "text": "Categorizing…" }),
+            json!({ "type": "tool_use", "id": "toolu_1", "name": "transactions__categorize", "input": { "transaction_id": "a" } }),
+            json!({ "type": "tool_use", "id": "toolu_2", "name": "transactions__categorize", "input": {} }),
+        ];
+        let results = cut_off_results(&content);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["tool_use_id"], "toolu_1");
+        assert_eq!(results[1]["tool_use_id"], "toolu_2");
+        assert!(results.iter().all(|r| r["is_error"] == true));
+        assert!(cut_off_results(&[json!({ "type": "text", "text": "just words" })]).is_empty());
+    }
 }
