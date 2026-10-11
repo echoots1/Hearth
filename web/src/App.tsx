@@ -1,38 +1,70 @@
-import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
+import { BottomNav } from "./components/BottomNav";
+import { Spinner } from "./components/ui";
+import { useInboxCounts } from "./lib/data";
+import { SessionProvider, useSession } from "./lib/session";
+import { Login, Setup } from "./screens/Auth";
+import { Activity } from "./screens/Activity";
+import { Budget } from "./screens/Budget";
+import { CategoryScreen } from "./screens/Category";
+import { Goals } from "./screens/Goals";
+import { More } from "./screens/More";
+import { Plan } from "./screens/Plan";
+import { Accounts } from "./screens/more/Accounts";
+import { ApiKeys } from "./screens/more/ApiKeys";
+import { Assistant } from "./screens/more/Assistant";
+import { Audit } from "./screens/more/Audit";
+import { Integrations } from "./screens/more/Integrations";
+import { Notifications } from "./screens/more/Notifications";
+import { Rules } from "./screens/more/Rules";
+import { SettingsScreen } from "./screens/more/Settings";
+import { Users } from "./screens/more/Users";
 
-type Health = { status: string; version: string; database: string };
+function Shell() {
+  const counts = useInboxCounts();
+  return (
+    <div className="mx-auto flex min-h-full max-w-md flex-col gap-4 px-4 pb-32 pt-[max(1rem,env(safe-area-inset-top))]">
+      <Outlet />
+      <BottomNav badge={counts.total} />
+    </div>
+  );
+}
+
+function Gate() {
+  const { ready, me, needsSetup } = useSession();
+  if (!ready) return <Spinner label="Starting…" />;
+  if (needsSetup) return <Setup />;
+  if (!me) return <Login />;
+  return (
+    <Routes>
+      <Route element={<Shell />}>
+        <Route index element={<Budget />} />
+        <Route path="category/:id" element={<CategoryScreen />} />
+        <Route path="activity" element={<Activity />} />
+        <Route path="plan" element={<Plan />} />
+        <Route path="goals" element={<Goals />} />
+        <Route path="more" element={<More />} />
+        <Route path="more/accounts" element={<Accounts />} />
+        <Route path="more/rules" element={<Rules />} />
+        <Route path="more/settings" element={<SettingsScreen />} />
+        <Route path="more/assistant" element={<Assistant />} />
+        <Route path="more/notifications" element={<Notifications />} />
+        <Route path="more/users" element={<Users />} />
+        <Route path="more/keys" element={<ApiKeys />} />
+        <Route path="more/integrations" element={<Integrations />} />
+        <Route path="more/audit" element={<Audit />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+}
 
 export default function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/health")
-      .then(async (r) => setHealth((await r.json()) as Health))
-      .catch((e: unknown) => setError(String(e)));
-  }, []);
-
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col px-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))]">
-      <header className="flex items-baseline gap-2 py-3">
-        <span className="text-2xl font-semibold tracking-tight">Hearth</span>
-        <span className="text-sm text-stone-500">household money, on plan.</span>
-      </header>
-      <main className="mt-6 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-        <h1 className="text-base font-medium">Server status</h1>
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-        {!health && !error && <p className="mt-2 text-sm text-stone-500">Checking…</p>}
-        {health && (
-          <dl className="mt-2 grid grid-cols-2 gap-y-1 text-sm">
-            <dt className="text-stone-500">Status</dt>
-            <dd>{health.status}</dd>
-            <dt className="text-stone-500">Database</dt>
-            <dd>{health.database}</dd>
-            <dt className="text-stone-500">Version</dt>
-            <dd>{health.version}</dd>
-          </dl>
-        )}
-      </main>
-    </div>
+    <BrowserRouter>
+      <SessionProvider>
+        <Gate />
+      </SessionProvider>
+    </BrowserRouter>
   );
 }

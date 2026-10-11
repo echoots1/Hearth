@@ -1,8 +1,111 @@
 @import "tailwindcss";
+@import "@fontsource-variable/manrope";
 
+/* Hearth look: warm stone neutrals, one dark cash card, orange = attention, blue = income. */
 @theme {
-  --color-ember: #f59e0b;
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --color-ground: #f4f1ec;
+  --color-card: #ffffff;
+  --color-card-head: #faf8f5;
+  --color-line: #ece7e1;
+  --color-line-soft: #f1ede8;
+  --color-ink: #1c1917;
+  --color-ink-2: #44403c;
+  --color-muted: #6b6560;
+  --color-faint: #a8a29e;
+  --color-attention: #c2410c;
+  --color-income: #1d4ed8;
+  --color-tint: #fffbeb;
+  --color-tint-ink: #92400e;
+  --color-tint-line: #e7d8b8;
+  --color-dark: #1c1917;
+  --color-dark-tile: #292524;
+  --color-dark-line: #44403c;
+  --color-floor: #fde68a;
+  --color-flame: #f59e0b;
+  --radius-card: 20px;
+  --radius-hero: 24px;
+  --shadow-card: 0 1px 2px rgba(28, 25, 23, 0.06);
+  --shadow-nav: 0 6px 24px rgba(28, 25, 23, 0.12);
 }
 
-html, body, #root { height: 100%; }
-body { @apply bg-stone-50 text-stone-900 antialiased; }
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-ground text-ink antialiased;
+    font-variant-numeric: tabular-nums;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+}
+
+@utility btn {
+  @apply inline-flex h-11 items-center justify-center gap-2 rounded-[14px] px-4 text-[13px] font-bold whitespace-nowrap transition active:scale-[0.98] disabled:opacity-50;
+}
+@utility chip {
+  @apply inline-flex h-9 items-center rounded-full px-3 text-[12px] font-bold whitespace-nowrap transition active:scale-[0.98];
+}
+
+@layer components {
+  .card {
+    @apply bg-card rounded-[var(--radius-card)] shadow-[var(--shadow-card)];
+  }
+  .card-head {
+    @apply bg-card-head border-line flex items-center justify-between border-b px-4 py-3;
+  }
+  .label {
+    @apply text-muted text-[11px] font-bold tracking-[0.06em] uppercase;
+  }
+  .btn-dark {
+    @apply btn bg-ink text-ground;
+  }
+  .btn-light {
+    @apply btn bg-card text-ink border-line border;
+  }
+  .btn-tint {
+    @apply btn bg-card text-ink border-tint-line border;
+  }
+  .btn-attention {
+    @apply btn bg-attention text-white;
+  }
+  .chip-dark {
+    @apply chip bg-ink text-ground;
+  }
+  .chip-light {
+    @apply chip bg-card text-ink border-line border;
+  }
+  .chip-dashed {
+    @apply chip bg-card text-muted border-faint border border-dashed;
+  }
+  .field {
+    @apply bg-card-head border-line text-ink w-full rounded-xl border px-3 py-2.5 text-[15px] font-medium outline-none focus:border-ink;
+  }
+  .row {
+    @apply flex min-h-11 items-center justify-between gap-3 px-4 py-3;
+  }
+  .divider > * + * {
+    @apply border-line-soft border-t;
+  }
+  .icon-btn {
+    @apply bg-card text-ink flex h-11 w-11 items-center justify-center rounded-full shadow-[var(--shadow-card)];
+  }
+}

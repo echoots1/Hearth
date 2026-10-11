@@ -133,6 +133,8 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 
 | Tool | Area | Description |
 | --- | --- | --- |
+| `accounts.create` | always applies | Add a manual account (checking, savings, credit card, cash…). Synced accounts come from the integrations. |
+| `accounts.update` | always applies | Rename an account, change whether it counts as cash, or deactivate it. |
 | `alerts.ack` | always applies | Acknowledge an alert (a human has seen it; nagging stops). |
 | `alerts.reopen` | always applies | Reopen a done alert. |
 | `alerts.resolve` | always applies | Mark an alert done with a short resolution. |
@@ -176,6 +178,62 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 
 ### Input schemas
 
+<details><summary><code>accounts.create</code></summary>
+
+```json
+{
+  "$defs": {
+    "AccountType": {
+      "enum": [
+        "checking",
+        "savings",
+        "credit_card",
+        "virtual_card",
+        "cash",
+        "loan",
+        "investment",
+        "other"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "include_in_cash": {
+      "description": "Counts toward Cash now and the low point. Default: checking, savings and cash do.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "institution_label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mask": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "$ref": "#/$defs/AccountType"
+    }
+  },
+  "required": [
+    "name",
+    "type"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
 <details><summary><code>accounts.list</code></summary>
 
 ```json
@@ -188,6 +246,49 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
       ]
     }
   },
+  "type": "object"
+}
+```
+
+</details>
+
+<details><summary><code>accounts.update</code></summary>
+
+```json
+{
+  "properties": {
+    "account_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "include_in_cash": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "institution_label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "is_active": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "account_id"
+  ],
   "type": "object"
 }
 ```
