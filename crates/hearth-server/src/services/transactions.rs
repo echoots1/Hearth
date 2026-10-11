@@ -534,11 +534,25 @@ pub enum UpsertOutcome {
     Inserted,
     Updated,
     Unchanged,
+    /// A $0 row: not stored, and any earlier row for it is removed.
+    Ignored,
 }
 
 /// Insert or update a synced transaction by `(source, external_id)`.
 /// Category, note, planned link and review state survive updates.
-pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, UpsertOutcome)> {
+///
+/// A $0 amount is ignored. Card networks send them for verification holds and
+/// released authorizations; they are not spending and would only clutter the
+/// review queue. When a provider turns an earlier non-zero row into $0 (a hold
+/// that settled for nothing), that row is soft-deleted like a removed one.
+pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<UpsertOutcome> {
+    if inc.amount_cents == Cents::ZERO {
+        remove_external(ctx, inc.source, &inc.external_id).await?;
+        if let Some(old_ext) = &inc.replaces_external_id {
+            remove_external(ctx, inc.source, old_ext).await?;
+        }
+        return Ok(UpsertOutcome::Ignored);
+    }
     // 1. Pending → posted replacement (Plaid): move the old row to the new id.
     if let Some(old_ext) = &inc.replaces_external_id
         && let Some(existing) = sqlx::query_as::<_, Transaction>(
@@ -549,10 +563,10 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
         .fetch_optional(&ctx.pool)
         .await?
     {
-        let t = sqlx::query_as::<_, Transaction>(
+        sqlx::query(
             "update transactions set external_id = $2, date = $3, description = case when description = original_description then $4 else description end,
                original_description = $5, amount_cents = $6, pending = $7, raw = $8, deleted_at = null, updated_at = now()
-             where id = $1 returning *",
+             where id = $1",
         )
         .bind(existing.id)
         .bind(&inc.external_id)
@@ -562,9 +576,9 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
         .bind(inc.amount_cents)
         .bind(inc.pending)
         .bind(&inc.raw)
-        .fetch_one(&ctx.pool)
+        .execute(&ctx.pool)
         .await?;
-        return Ok((t, UpsertOutcome::Updated));
+        return Ok(UpsertOutcome::Updated);
     }
     // 2. Existing row with the same id: update the provider-owned fields.
     if let Some(existing) = sqlx::query_as::<_, Transaction>(
@@ -581,12 +595,12 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
             && existing.original_description == inc.original_description
             && existing.deleted_at.is_none();
         if unchanged {
-            return Ok((existing, UpsertOutcome::Unchanged));
+            return Ok(UpsertOutcome::Unchanged);
         }
-        let t = sqlx::query_as::<_, Transaction>(
+        sqlx::query(
             "update transactions set date = $2, description = case when description = original_description then $3 else description end,
                original_description = $4, amount_cents = $5, pending = $6, raw = $7, deleted_at = null, updated_at = now()
-             where id = $1 returning *",
+             where id = $1",
         )
         .bind(existing.id)
         .bind(inc.date)
@@ -595,14 +609,14 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
         .bind(inc.amount_cents)
         .bind(inc.pending)
         .bind(&inc.raw)
-        .fetch_one(&ctx.pool)
+        .execute(&ctx.pool)
         .await?;
-        return Ok((t, UpsertOutcome::Updated));
+        return Ok(UpsertOutcome::Updated);
     }
     // 3. New row.
-    let t = sqlx::query_as::<_, Transaction>(
+    sqlx::query(
         "insert into transactions (household_id, account_id, date, description, original_description, amount_cents, source, external_id, pending, raw, review_status)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending') returning *",
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')",
     )
     .bind(ctx.household_id)
     .bind(inc.account_id)
@@ -614,9 +628,9 @@ pub async fn upsert_incoming(ctx: &Ctx, inc: &Incoming) -> Result<(Transaction, 
     .bind(&inc.external_id)
     .bind(inc.pending)
     .bind(&inc.raw)
-    .fetch_one(&ctx.pool)
+    .execute(&ctx.pool)
     .await?;
-    Ok((t, UpsertOutcome::Inserted))
+    Ok(UpsertOutcome::Inserted)
 }
 
 /// Soft-delete a synced row the provider removed.
