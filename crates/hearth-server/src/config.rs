@@ -15,6 +15,8 @@ pub struct Config {
     pub database_url: String,
     pub app_secret: String,
     pub app_encryption_key: Option<String>,
+    /// `Host` values the MCP endpoint accepts (DNS-rebinding guard).
+    pub mcp_allowed_hosts: Vec<String>,
     pub jobs: JobsConfig,
     pub plaid: Option<PlaidConfig>,
     pub privacy: Option<PrivacyConfig>,
@@ -156,16 +158,24 @@ impl Config {
             None => None,
         };
 
+        let app_url = var("APP_URL")
+            .unwrap_or_else(|| "http://localhost:3000".into())
+            .trim_end_matches('/')
+            .to_string();
+        let port: u16 = parse("PORT", 3000)?;
+        let mcp_allowed_hosts = match var("MCP_ALLOWED_HOSTS") {
+            Some(_) => list("MCP_ALLOWED_HOSTS", &[]),
+            None => default_mcp_hosts(&app_url, port),
+        };
+
         Ok(Config {
-            app_url: var("APP_URL")
-                .unwrap_or_else(|| "http://localhost:3000".into())
-                .trim_end_matches('/')
-                .to_string(),
-            port: parse("PORT", 3000)?,
+            app_url,
+            port,
             trust_proxy: flag("TRUST_PROXY", false)?,
             database_url: required("DATABASE_URL")?,
             app_secret,
             app_encryption_key,
+            mcp_allowed_hosts,
             jobs: JobsConfig {
                 enabled: flag("JOBS_ENABLED", true)?,
                 tick_seconds: parse("SCHEDULER_TICK_SECONDS", 30)?,
@@ -182,5 +192,51 @@ impl Config {
 
     pub fn is_https(&self) -> bool {
         self.app_url.starts_with("https://")
+    }
+}
+
+/// The host (with and without its port) from `APP_URL`, plus loopback on the
+/// listening port, so local and proxied access both pass the `Host` check.
+fn default_mcp_hosts(app_url: &str, port: u16) -> Vec<String> {
+    let mut hosts = vec![
+        "localhost".to_string(),
+        format!("localhost:{port}"),
+        "127.0.0.1".to_string(),
+        format!("127.0.0.1:{port}"),
+        "[::1]".to_string(),
+        format!("[::1]:{port}"),
+    ];
+    if let Some(authority) = app_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .and_then(|rest| rest.split('/').next())
+        .filter(|a| !a.is_empty())
+    {
+        let authority = authority.to_ascii_lowercase();
+        let bare = match authority.rsplit_once(':') {
+            Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) && !h.is_empty() => h.to_string(),
+            _ => authority.clone(),
+        };
+        for h in [bare, authority] {
+            if !hosts.contains(&h) {
+                hosts.push(h);
+            }
+        }
+    }
+    hosts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_mcp_hosts;
+
+    #[test]
+    fn mcp_hosts_from_app_url() {
+        let h = default_mcp_hosts("https://money.example.net", 3000);
+        assert!(h.contains(&"money.example.net".to_string()));
+        assert!(h.contains(&"localhost:3000".to_string()));
+        let h = default_mcp_hosts("http://home-server:8080", 3000);
+        assert!(h.contains(&"home-server".to_string()));
+        assert!(h.contains(&"home-server:8080".to_string()));
     }
 }

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    extract::Request,
     routing::{get, post},
 };
 use chrono::Utc;
@@ -103,7 +104,14 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .nest("/api", api)
+        .merge(crate::mcp::router(state.clone()))
         .fallback(assets::spa_fallback)
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
+            tracing::info_span!(
+                "request",
+                method = %req.method(),
+                path = %crate::mcp::redact_path(req.uri().path()),
+            )
+        }))
         .with_state(state)
 }

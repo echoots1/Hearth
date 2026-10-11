@@ -9,6 +9,7 @@ mod auth;
 mod config;
 mod db;
 mod integrations;
+mod mcp;
 #[allow(dead_code)] // consumed by the API, MCP and jobs steps
 mod services;
 #[allow(dead_code)] // consumed by the API and MCP steps
@@ -35,6 +36,8 @@ enum Command {
     Serve,
     /// Run pending database migrations and exit.
     Migrate,
+    /// Print the MCP tool reference as Markdown (the body of docs/MCP.md).
+    Tools,
 }
 
 #[tokio::main]
@@ -44,9 +47,14 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Command::Tools)) {
+        print!("{}", tools::reference_markdown());
+        return Ok(());
+    }
     let config = Config::from_env().context("invalid configuration")?;
 
     match cli.command.unwrap_or(Command::Serve) {
+        Command::Tools => unreachable!("handled above"),
         Command::Migrate => {
             let pool = db::connect(&config.database_url).await?;
             db::migrate(&pool).await?;
