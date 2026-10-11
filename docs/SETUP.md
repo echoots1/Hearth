@@ -47,7 +47,7 @@ Edit `.env`. The lines that matter on day one:
 | `APP_URL` | The public URL, e.g. `https://money.example.net`. Cookies go Secure when it starts with `https`. Notification links and the connector URL are built from it. |
 | `APP_SECRET` | A random string of at least 32 characters (`openssl rand -base64 48`). Signs sessions and one-tap notification links. |
 | `APP_ENCRYPTION_KEY` | Another random string. Encrypts the Plaid tokens, the VAPID push key and the optional Anthropic key at rest. Set it now; rotating it later means re-linking. |
-| `POSTGRES_PASSWORD` | Change it from the example. `DATABASE_URL` in compose follows it. |
+| `POSTGRES_PASSWORD` | Change it from the example. Any characters are fine; the app and the bundled Postgres both read it. |
 | `TRUST_PROXY` | `true` when behind a reverse proxy. |
 | `PORT` | The host port to publish (the container always listens on 3000). |
 
@@ -82,8 +82,8 @@ has every setting written inline.
 1. **Apps → Discover Apps**, then the **⋮** menu at the top right → **Install
    via YAML**.
 2. Name the app `hearth`, paste the file, and edit the lines marked `CHANGE`:
-   `APP_URL`, the two secrets, the database password (in both places), and the
-   host port if 3000 is taken (TrueNAS reports `port is already allocated`
+   `APP_URL`, the two secrets, the database password (one line at the top,
+   used by both services), and the host port if 3000 is taken (TrueNAS reports `port is already allocated`
    at install time; pick another, such as `3456`, and use it in `APP_URL`
    too).
 3. **Install.** The app shows healthy once Postgres is up and Hearth has run
@@ -368,6 +368,7 @@ Budget screen), a daily pass Hearth runs itself at the time you set, and
 | Push toggle fails | Not HTTPS, not installed to the home screen (iPhone), or `APP_ENCRYPTION_KEY` unset. |
 | Nothing is syncing | **More → Jobs** shows every job's last run, summary or error. `JOBS_ENABLED=false` turns the scheduler off on purpose. |
 | `Bind for …:3000 failed: port is already allocated` | Another app on the host owns that port. Change the left side of the `ports:` line (for example `"3456:3000"`) and put the same port in `APP_URL` (`http://<host>:3456`) so links and the connector URL match. |
+| `connecting to Postgres … invalid port number` (or `invalid URL`) | `DATABASE_URL` is set and its password contains `@ : / # %`. Unset `DATABASE_URL` and use `POSTGRES_PASSWORD`, which takes any characters, or percent-encode the password in the URL. |
 | Container restarts in a loop | `docker compose logs app`. Usual causes: `APP_SECRET` shorter than 32 characters, Plaid keys set without `APP_ENCRYPTION_KEY`, or Postgres not ready yet (it settles within a minute). |
 | `429 Too Many Requests` | Sign-in allows 10 attempts per 5 minutes per address and `/mcp` 300 requests per minute. Behind a proxy without `TRUST_PROXY=true` every client shares the proxy's address. |
 | Plaid link fails before Link opens | `APP_ENCRYPTION_KEY` unset, or `PLAID_ENV` doesn't match the key pair. |
@@ -398,8 +399,9 @@ off for the optional sections.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DATABASE_URL` | built by Compose | Postgres connection string. Compose builds it from the three below; set it directly only for an external database. |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `hearth` / `hearth` / `hearth` | The bundled Postgres. Change the password. |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | `db` / `5432` | Where Postgres is. The defaults point at the bundled `db` service. |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `hearth` / required / `hearth` | Credentials for the app and the bundled Postgres. The password can contain any characters. |
+| `DATABASE_URL` | blank | Full `postgres://` URL for an external database. Overrides the `POSTGRES_*` values when set. A password with `@ : / # %` must be percent-encoded here. |
 
 **Jobs**
 

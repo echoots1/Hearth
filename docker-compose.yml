@@ -19,7 +19,15 @@ services:
       APP_SECRET: ${APP_SECRET:-}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       TRUST_PROXY: ${TRUST_PROXY:-false}
-      DATABASE_URL: postgres://${POSTGRES_USER:-hearth}:${POSTGRES_PASSWORD:-hearth}@db:5432/${POSTGRES_DB:-hearth}
+      # Postgres: the bundled db service. Any characters are fine in the
+      # password; nothing is URL-encoded. DATABASE_URL is only for an external
+      # database and overrides these when set.
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-hearth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hearth}
+      POSTGRES_DB: ${POSTGRES_DB:-hearth}
+      DATABASE_URL: ${DATABASE_URL:-}
       # The container always listens on 3000; PORT in .env is the host port below.
       PORT: "3000"
     ports:

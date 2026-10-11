@@ -12,7 +12,7 @@ pub struct Config {
     pub app_url: String,
     pub port: u16,
     pub trust_proxy: bool,
-    pub database_url: String,
+    pub database: DatabaseConfig,
     pub app_secret: String,
     pub app_encryption_key: Option<String>,
     /// `Host` values the MCP endpoint accepts (DNS-rebinding guard).
@@ -22,6 +22,65 @@ pub struct Config {
     pub privacy: Option<PrivacyConfig>,
     pub ntfy: Option<NtfyConfig>,
     pub smtp: Option<SmtpConfig>,
+}
+
+/// Where Postgres is. Either a full `DATABASE_URL`, or the pieces, so that a
+/// password never has to be URL-escaped.
+#[derive(Clone, Debug)]
+pub enum DatabaseConfig {
+    Url(String),
+    Parts {
+        host: String,
+        port: u16,
+        user: String,
+        password: String,
+        database: String,
+    },
+}
+
+impl DatabaseConfig {
+    pub fn connect_options(&self) -> anyhow::Result<sqlx::postgres::PgConnectOptions> {
+        use sqlx::postgres::PgConnectOptions;
+        match self {
+            DatabaseConfig::Url(url) => url.parse::<PgConnectOptions>().map_err(|e| {
+                anyhow::anyhow!(
+                    "DATABASE_URL is not a valid postgres:// URL ({e}). A password with \
+                     characters like @ : / # or % must be percent-encoded there; or leave \
+                     DATABASE_URL unset and use POSTGRES_HOST / POSTGRES_USER / \
+                     POSTGRES_PASSWORD / POSTGRES_DB instead."
+                )
+            }),
+            DatabaseConfig::Parts {
+                host,
+                port,
+                user,
+                password,
+                database,
+            } => Ok(PgConnectOptions::new()
+                .host(host)
+                .port(*port)
+                .username(user)
+                .password(password)
+                .database(database)),
+        }
+    }
+
+    /// For logs: never includes the password.
+    pub fn describe(&self) -> String {
+        match self {
+            DatabaseConfig::Url(url) => {
+                let tail = url.rsplit_once('@').map(|(_, t)| t).unwrap_or("…");
+                format!("DATABASE_URL (…@{tail})")
+            }
+            DatabaseConfig::Parts {
+                host,
+                port,
+                user,
+                database,
+                ..
+            } => format!("{user}@{host}:{port}/{database}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +217,19 @@ impl Config {
             None => None,
         };
 
+        let database = match var("DATABASE_URL") {
+            Some(url) => DatabaseConfig::Url(url),
+            None => DatabaseConfig::Parts {
+                host: var("POSTGRES_HOST").unwrap_or_else(|| "db".into()),
+                port: parse("POSTGRES_PORT", 5432)?,
+                user: var("POSTGRES_USER").unwrap_or_else(|| "hearth".into()),
+                password: var("POSTGRES_PASSWORD").with_context(|| {
+                    "POSTGRES_PASSWORD is required (or set DATABASE_URL for an external database)"
+                })?,
+                database: var("POSTGRES_DB").unwrap_or_else(|| "hearth".into()),
+            },
+        };
+
         let app_url = var("APP_URL")
             .unwrap_or_else(|| "http://localhost:3000".into())
             .trim_end_matches('/')
@@ -172,7 +244,7 @@ impl Config {
             app_url,
             port,
             trust_proxy: flag("TRUST_PROXY", false)?,
-            database_url: required("DATABASE_URL")?,
+            database,
             app_secret,
             app_encryption_key,
             mcp_allowed_hosts,
@@ -228,7 +300,31 @@ fn default_mcp_hosts(app_url: &str, port: u16) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::default_mcp_hosts;
+    use super::{DatabaseConfig, default_mcp_hosts};
+
+    #[test]
+    fn database_parts_take_any_password() {
+        let db = DatabaseConfig::Parts {
+            host: "db".into(),
+            port: 5432,
+            user: "hearth".into(),
+            password: "p@ss:w/rd#100%".into(),
+            database: "hearth".into(),
+        };
+        assert!(db.connect_options().is_ok());
+        assert_eq!(db.describe(), "hearth@db:5432/hearth");
+    }
+
+    #[test]
+    fn database_url_with_raw_password_explains_itself() {
+        // `#` starts a URL fragment, so the host becomes `hearth` and the port `pa`.
+        let db = DatabaseConfig::Url("postgres://hearth:pa#ss@db:5432/hearth".into());
+        let err = db.connect_options().unwrap_err().to_string();
+        assert!(err.contains("percent-encoded"), "{err}");
+        assert!(!db.describe().contains("pa#ss"));
+        let ok = DatabaseConfig::Url("postgres://hearth:pa%23ss@db:5432/hearth".into());
+        assert!(ok.connect_options().is_ok());
+    }
 
     #[test]
     fn mcp_hosts_from_app_url() {

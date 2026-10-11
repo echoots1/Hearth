@@ -8,13 +8,14 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 /// Embedded SQL migrations from `crates/hearth-server/migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
-pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
+pub async fn connect(database: &crate::config::DatabaseConfig) -> anyhow::Result<PgPool> {
+    let options = database.connect_options()?;
     PgPoolOptions::new()
         .max_connections(10)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(database_url)
+        .connect_with(options)
         .await
-        .context("connecting to Postgres")
+        .with_context(|| format!("connecting to Postgres at {}", database.describe()))
 }
 
 pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
