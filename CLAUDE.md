@@ -14,6 +14,19 @@ let Claude tend it over MCP. `docs/ARCHITECTURE.md` is the design;
   (fmt, clippy with `-D warnings`, tests, web lint/build, a Docker build)
   must be green. Nobody pushes commits straight to `main`; the only direct
   push is a release tag.
+- **Merging a batch.** Each squash-merge is a push to `main`, and one that
+  touches the app (the paths listed under the development build below)
+  starts an image build; back-to-back merges start one build each (a newer
+  push cancels an older build still running, but a build that already
+  finished has published `:main`). To land several PRs and build once, put
+  `[skip ci]` in the squash commit message of every PR except the last.
+  GitHub then runs neither CI nor Image for that push. Merge the last PR
+  without it: that push runs CI on the combined `main` and builds the image
+  from the whole batch. The last PR must touch a path that builds; if it
+  does not, dispatch the Image workflow on `main` with an empty `release`
+  input for a development build by hand. Before each merge check the PR is
+  still green and mergeable against the current `main`; the batch as a
+  whole is only tested by that last run.
 - **Three image channels** on `ghcr.io/echoots1/hearth`:
   - `:main` and `:sha-<short>`: the **development** build. Published by a
     push to `main` that touches `crates/`, `web/`, `Cargo.toml`,
