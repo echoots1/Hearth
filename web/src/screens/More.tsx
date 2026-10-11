@@ -11,7 +11,8 @@ const items: { to: string; label: string; hint: string; icon: IconName }[] = [
   { to: "/more/users", label: "People", hint: "who can sign in", icon: "users" },
   { to: "/more/keys", label: "API keys", hint: "for the Claude connector", icon: "key" },
   { to: "/more/integrations", label: "Integrations", hint: "bank feeds and imports", icon: "plug" },
-  { to: "/more/audit", label: "Audit log", hint: "every change, who and when", icon: "clock" },
+  { to: "/more/jobs", label: "Jobs", hint: "sync, process, evaluate, notify", icon: "clock" },
+  { to: "/more/audit", label: "Audit log", hint: "every change, who and when", icon: "list" },
 ];
 
 export function More() {

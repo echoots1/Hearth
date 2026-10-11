@@ -7,6 +7,7 @@
 mod auth;
 mod error;
 mod health;
+mod integrations;
 mod keys;
 mod links;
 mod push;
@@ -88,6 +89,29 @@ pub fn router(state: AppState) -> Router {
         .route("/proposals/{id}/decline", post(tools::decline_proposal))
         .route("/actions/{id}/undo", post(tools::undo_action))
         .route("/n/{token}", get(links::act))
+        .route("/integrations/status", get(integrations::status))
+        .route("/plaid/link-token", post(integrations::plaid_link_token))
+        .route("/plaid/exchange", post(integrations::plaid_exchange))
+        .route("/plaid/items/{id}/sync", post(integrations::plaid_sync))
+        .route(
+            "/plaid/items/{id}",
+            axum::routing::delete(integrations::plaid_remove),
+        )
+        .route("/plaid/webhook", post(integrations::plaid_webhook))
+        .route("/privacy/sync", post(integrations::privacy_sync))
+        .route("/import/csv/headers", post(integrations::csv_headers))
+        .route("/import/csv/preview", post(integrations::csv_preview))
+        .route("/import/csv", post(integrations::csv_import))
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
+        .route(
+            "/import/batches/{id}/rollback",
+            post(integrations::csv_rollback),
+        )
+        .route("/import/presets", post(integrations::presets_save))
+        .route(
+            "/import/presets/{name}",
+            axum::routing::delete(integrations::presets_delete),
+        )
         .route("/push/vapid", get(push::vapid_public_key))
         .route("/push/subscribe", post(push::subscribe))
         .route("/push/unsubscribe", post(push::unsubscribe))
