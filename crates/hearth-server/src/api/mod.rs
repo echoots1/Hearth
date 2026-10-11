@@ -8,6 +8,7 @@ mod auth;
 mod error;
 mod health;
 mod keys;
+mod links;
 mod push;
 mod tools;
 mod users;
@@ -86,6 +87,7 @@ pub fn router(state: AppState) -> Router {
         .route("/proposals/{id}/approve", post(tools::approve_proposal))
         .route("/proposals/{id}/decline", post(tools::decline_proposal))
         .route("/actions/{id}/undo", post(tools::undo_action))
+        .route("/n/{token}", get(links::act))
         .route("/push/vapid", get(push::vapid_public_key))
         .route("/push/subscribe", post(push::subscribe))
         .route("/push/unsubscribe", post(push::unsubscribe))

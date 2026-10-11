@@ -13,6 +13,7 @@ pub mod budget;
 pub mod debts;
 pub mod goals;
 pub mod household;
+pub mod notifications;
 pub mod planned;
 pub mod push;
 pub mod questions;
