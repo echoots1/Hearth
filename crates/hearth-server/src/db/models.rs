@@ -14,7 +14,7 @@ use uuid::Uuid;
 macro_rules! pg_enum {
     ($(#[$meta:meta])* $name:ident, $type_name:literal, { $($variant:ident => $lit:literal),+ $(,)? }) => {
         $(#[$meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type, schemars::JsonSchema)]
         #[sqlx(type_name = $type_name, rename_all = "snake_case")]
         #[serde(rename_all = "snake_case")]
         pub enum $name { $($variant),+ }
