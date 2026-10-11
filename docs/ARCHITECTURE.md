@@ -12,7 +12,12 @@ monthly plan, keeps an honest running estimate of cash, and tells you how low
 that cash will get before the next paycheck. It raises a flag when something
 is off-plan and lets an AI assistant (Claude, over MCP) do the day-to-day
 tending: categorizing the odd transaction, asking the humans a question,
-answering "can we buy X?" with a straight yes, not now, or no.
+answering "can we buy X?" with a straight yes, not now, or no, and doing the
+**money planning**: when you say "we added a streaming service, $11.99 on the
+14th" or "the car insurance renews in March at $640", the assistant records
+the bill, puts it in the right category, sets the plan, and the app does the
+rest. Everything can also be done by hand in the UI; chat is the preferred
+front door, the UI is the fallback and the place you look.
 
 Hearth is **not**: a multi-user SaaS, an investment tracker, a bill-pay or
 money-movement tool, a receipt scanner, or a forecasting engine beyond the
@@ -22,7 +27,7 @@ except what the integrations the family turns on need.
 
 ## 2. Core concepts — proposed
 
-Nine nouns. Everything on screen and every MCP tool is made of these.
+Ten nouns. Everything on screen and every MCP tool is made of these.
 
 | Noun | One line | Lives on screen as |
 | --- | --- | --- |
@@ -30,14 +35,17 @@ Nine nouns. Everything on screen and every MCP tool is made of these.
 | **Transaction** | One movement of money: date, description, signed amount (negative = out), source, category, pending flag, note. | Category detail, Activity |
 | **Category** | A bucket with a sign (income/spend), a group, a standing note, flags (`everyday`, `due_day`), and a **plan** made of phases. | Budget list rows |
 | **Plan phase** | "From month M, plan N per month." The current phase is the plan; the next phase is the "after the change" column. | Category detail → Plan |
-| **Rule** | Pattern → category (or ignore / flag canceled). Runs on every new transaction; no match → review. | More → Rules, "make a rule" chips |
-| **Planned item** | A one-off approved ahead of time so it isn't flagged when it posts. | Planned tab, low-point tile |
-| **Sinking fund** | Non-monthly bills with due month and cycle; monthly set-aside vs funded balance. | More → Sinking fund, a Savings row |
+| **Rule** | Pattern → category (or ignore). Runs on every new transaction; no match → review. | More → Rules, "make a rule" chips |
+| **Recurring bill** | A commitment that repeats: name, amount, cadence (monthly / every N months / yearly), next due date, the category it posts to, the account or card it hits, a match pattern, status (active / canceled / paused). Monthly bills drive the category plan and the bills-due-before-payday number; non-monthly bills drive the sinking-fund set-aside; canceled bills that charge again raise an alert. | Plan tab, category subtitle ("due 14th"), low-point tile |
+| **Planned item** | A one-off approved ahead of time so it isn't flagged when it posts. | Plan tab, low-point tile |
+| **Sinking fund** | The money set aside for non-monthly bills: a funded balance with an as-of, and the derived should-have-saved from the yearly/quarterly bills. | Plan tab → Sinking fund |
 | **Debt** | Balance, APR, minimum, due day; payoff projection and interest per day. | Debts tab |
 | **Alert / Question** | Something that needs a human: raised by a job (alert) or by the AI (question). Lifecycle open → notified → ack → done. | Activity inbox, attention pills |
 
 Derived, never stored: running estimate, projected low point, category
-rollups, pace, sinking-fund should-have, debt projections.
+rollups, pace, suggested category plans (sum of a category's bills), the
+sinking-fund should-have, debt projections, each bill's next due date after
+a match.
 
 ## 3. How a day works — proposed
 
@@ -57,6 +65,14 @@ rollups, pace, sinking-fund should-have, debt projections.
    where it can, asks a question where it can't, records balances the
    humans report in chat, and answers "can we buy X?" by checking cash, the
    category, and the plan.
+7. **Planning happens in chat first.** "Add the gym, $45 on the 3rd" →
+   the AI creates the recurring bill, picks or creates the category, raises
+   the plan if the bills in it now exceed it, and adds a match pattern so
+   the charge categorizes itself. "Cancel the streaming service" → the bill
+   is marked canceled and any later charge is an alert. "Insurance renews
+   in March, $640" → a yearly bill, and the sinking fund's set-aside goes
+   up by $640/12. The UI shows the result and offers the same edits by
+   hand.
 
 Jobs detect; people and the AI decide. A job never categorizes an ambiguous
 transaction, never resolves an alert, never changes a plan.
@@ -109,15 +125,17 @@ In-process scheduler (no external cron), Postgres advisory lock per job,
 | Job | Interval | May do | May not do |
 | --- | --- | --- | --- |
 | sync:plaid / sync:privacy | 60 / 10 min | upsert transactions, balances, declines | categorize beyond rules |
-| process | after sync, 5 min | apply rules, match planned items, queue review | guess a category |
+| process | after sync, 5 min | apply rules, match recurring bills and planned items, advance due dates, queue review | guess a category |
 | evaluate | 15 min | raise/refresh alerts by dedupe key | resolve or ack |
 | notify | 1 min | send, nag, respect quiet hours | interpret replies |
 | housekeeping | daily | prune runs, sessions, old deliveries | touch money data |
 
 Alert catalogue (each with a dedupe key and default severity): unplanned
-large charge, canceled service charged, category blown, category pace, cash
-floor breached, debt redraw, card declined, planned item not seen, stale
-balance, sync failing, review backlog. Category notes may carry three
+large charge, canceled bill charged, bill amount changed (a recurring bill
+posts for noticeably more than its amount), bill not seen (past due, no
+matching charge), category blown, category pace, cash floor breached, debt
+redraw, card declined, planned item not seen, stale balance, sync failing,
+review backlog. Category notes may carry three
 literal tokens jobs honor: `[no-alerts]`, `[no-large-charge]`, `[no-pace]`.
 
 ## 8. AI / MCP surface — proposed
@@ -127,12 +145,20 @@ Endpoint `/mcp` (Streamable HTTP), bearer API key created in Settings with
 the UI uses, named `<noun>.<verb>`, money as `*_cents`, dates ISO.
 
 Reads: budget month view, category, balance overview (estimate + low point
-with components), transactions and review queue, planned, sinking, debts
-(+ projection, delay cost), alerts, questions, settings, "today".
+with components), transactions and review queue, recurring bills (upcoming,
+by category, canceled), planned, sinking, debts (+ projection, delay
+cost), alerts, questions, settings, "today".
 Writes: categorize, set note, create manual transaction, apply rules,
-create rule, set plan phase, create/update planned item, set reported
+create rule, set plan phase, **add / update / cancel / pause a recurring
+bill**, create/update planned item, set reported balance, set sinking-fund
 balance, upsert debt, ack/resolve/snooze alert, ask/answer/dismiss question,
 allow-listed settings.
+
+Planning tools are designed for one-sentence requests: `bills.add` takes
+name, amount, cadence, next due, and optional category/account/pattern, and
+returns what it created plus any plan it raised, so the assistant can
+confirm in one line. When a category is ambiguous the assistant asks (a
+question), it does not guess.
 
 "Can we buy X?" = `balance.get` (cash check) → `budget.get_month` (category
 check) → `planned.list` / `debts.delay_cost` (plan check) → YES / NOT NOW /
@@ -142,9 +168,10 @@ NO, optionally `planned.create` on YES.
 
 See `docs/UI.md`. Home is the Budget: cash card, attention pills, totals,
 grouped category rows. Activity is the single inbox for alerts, AI
-questions, and uncategorized transactions. Planned and Debts are their own
-tabs; sinking fund, accounts, rules, settings, users, API keys, integrations
-and jobs live under More. Warm stone neutrals, one typeface, orange =
+questions, and uncategorized transactions. **Plan** is a timeline of what's
+coming: recurring bills by due date, planned one-offs, and the sinking fund
+for the yearly ones, with add/edit by hand. Debts is its own tab; accounts,
+rules, settings, users, API keys, integrations and jobs live under More. Warm stone neutrals, one typeface, orange =
 attention, blue = income.
 
 ## 10. Security and privacy — proposed
@@ -164,3 +191,6 @@ institutions or people; seed data is obviously fake.
 | 3 | Everyday pace for the low point | `max(actual pace, plan pace)`, pessimistic by design. |
 | 4 | Unspent plan at month end | Resets (no rollover) in v1. |
 | 5 | Where the AI's "can we buy" answer is logged | As a question with the answer recorded, so it's auditable. |
+| 6 | Is a category's plan set by hand, or derived from its bills? | Both: the plan is a number you (or the AI) set; the app shows "bills in this category total $X" and the AI raises the plan when a new bill would exceed it. Never silently lowers it. |
+| 7 | One bill → one category, or can a bill split? | One category per bill in v1. |
+| 8 | Do yearly bills live in a category too? | Yes: they post to their category in the month they hit; the set-aside shows as the Sinking fund row. |

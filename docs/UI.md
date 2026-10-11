@@ -17,9 +17,9 @@ a phone and widens gracefully. Demo data only in mockups and seeds.
 
 ## Navigation
 
-Bottom nav, five items: **Budget** (home), **Activity**, **Planned**,
-**Debts**, **More** (sinking fund, accounts, rules, settings, users, API
-keys, integrations, jobs).
+Bottom nav, five items: **Budget** (home), **Activity**, **Plan**,
+**Debts**, **More** (accounts, rules, settings, users, API keys,
+integrations, jobs).
 
 ## Screens
 
@@ -69,6 +69,21 @@ Tabs: **Inbox** · All activity · Done.
   chips, "Other…", "+ make a rule", and a "Let Claude take a pass" button
   for the remainder.
 
-### Planned, Debts, More
+### Plan
+
+A timeline of what's coming, soonest first, with the same card language:
+
+- **Up next**: recurring bills and planned one-offs between now and the next
+  paycheck, each with due date, amount, category, and whether it's already
+  posted. Mirrors the low-point tiles on the home screen.
+- **Recurring bills**: every active bill grouped by cadence (monthly ·
+  every N months · yearly), with amount, next due, category, the card or
+  account it hits, and a canceled/paused tag. Tap → edit; "+ Add a bill"
+  opens a short form. The same form is what the AI fills from a sentence.
+- **Sinking fund**: funded balance vs should-have for the non-monthly bills,
+  the monthly set-aside, and an "update balance" button.
+- **One-offs**: planned items with status chips (planned · done · dropped).
+
+### Debts, More
 
 Follow the same card language; specified in ARCHITECTURE §9.
