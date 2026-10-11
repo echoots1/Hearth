@@ -2,16 +2,34 @@ name: Image
 
 # Builds the container image for linux/amd64 and linux/arm64 on native runners
 # and publishes a multi-arch manifest to GitHub Container Registry:
-#   ghcr.io/<owner>/hearth:main        every push to main
-#   ghcr.io/<owner>/hearth:sha-<short> every push to main
+#   ghcr.io/<owner>/hearth:main        a push to main that changes the app
+#   ghcr.io/<owner>/hearth:sha-<short> the same push
 #   ghcr.io/<owner>/hearth:latest      tracks main until there are releases
 #   ghcr.io/<owner>/hearth:<version>   when a v* tag is pushed
+#
+# Only what ends up in the image triggers a build: the Rust and web sources,
+# the Cargo manifests, the Dockerfile and this workflow. Docs, compose files,
+# scripts and the rest of .github do not. A newer push to main cancels a
+# build still running for an older one. Tags always build (path filters do
+# not apply to tag pushes), and "Run workflow" builds on demand.
 
 on:
   push:
     branches: [main]
+    paths:
+      - "crates/**"
+      - "web/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/image.yml"
     tags: ["v*"]
   workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
