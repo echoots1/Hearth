@@ -55,7 +55,6 @@ impl ApiCaller {
             ApiCaller::Key(k) => k.scope == ApiKeyScope::ReadWrite,
         }
     }
-
 }
 
 pub struct AuthRejection(StatusCode, &'static str);
