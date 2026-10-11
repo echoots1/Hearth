@@ -82,6 +82,10 @@ pub async fn create(ctx: &Ctx, actor: &Actor, c: CreateAccount) -> Result<Accoun
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UpdateAccount {
     pub name: Option<String>,
+    /// Reclassify the account (a synced account's type is only the bank's guess).
+    #[serde(default, rename = "type")]
+    pub account_type: Option<AccountType>,
+    /// When the type changes and this is not given, the default for the new type applies.
     pub include_in_cash: Option<bool>,
     pub is_active: Option<bool>,
     pub institution_label: Option<String>,
@@ -89,17 +93,26 @@ pub struct UpdateAccount {
 
 pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateAccount) -> Result<Account> {
     let before = get(ctx, id).await?;
+    if let Some(n) = &u.name
+        && n.trim().is_empty()
+    {
+        return Err(invalid("name is required"));
+    }
+    let new_type = u.account_type.filter(|t| *t != before.account_type);
+    let include_in_cash = u.include_in_cash.or_else(|| new_type.map(default_include));
     let after = sqlx::query_as::<_, Account>(
         "update accounts set name = coalesce($3, name), include_in_cash = coalesce($4, include_in_cash),
-         is_active = coalesce($5, is_active), institution_label = coalesce($6, institution_label), updated_at = now()
+         is_active = coalesce($5, is_active), institution_label = coalesce($6, institution_label),
+         type = coalesce($7, type), updated_at = now()
          where household_id = $1 and id = $2 returning *",
     )
     .bind(ctx.household_id)
     .bind(id)
     .bind(u.name.as_deref().map(str::trim))
-    .bind(u.include_in_cash)
+    .bind(include_in_cash)
     .bind(u.is_active)
     .bind(&u.institution_label)
+    .bind(new_type)
     .fetch_one(&ctx.pool)
     .await?;
     super::audit::record(

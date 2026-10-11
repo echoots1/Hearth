@@ -44,6 +44,10 @@ pub struct CreateAccountArgs {
 pub struct UpdateAccountArgs {
     pub account_id: Uuid,
     pub name: Option<String>,
+    /// Reclassify the account: checking, savings, credit_card, virtual_card, cash, loan, investment or other. A bank-synced account's type is only Plaid's guess; fix it here when it is wrong.
+    #[serde(rename = "type")]
+    pub account_type: Option<crate::db::models::AccountType>,
+    /// Counts toward Cash now and the low point. When the type changes and this is omitted, the new type's default applies (checking, savings and cash count).
     pub include_in_cash: Option<bool>,
     pub is_active: Option<bool>,
     pub institution_label: Option<String>,
@@ -440,7 +444,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "accounts.update",
-            "Rename an account, change whether it counts as cash, or deactivate it.",
+            "Rename an account, change its type (checking, savings, credit card, loan…), change whether it counts as cash, or deactivate it. Works on synced accounts too.",
             UpdateAccountArgs,
             writes = true,
             area = None,
@@ -451,6 +455,7 @@ pub fn tools() -> Vec<ToolDef> {
                     a.account_id,
                     services::accounts::UpdateAccount {
                         name: a.name,
+                        account_type: a.account_type,
                         include_in_cash: a.include_in_cash,
                         is_active: a.is_active,
                         institution_label: a.institution_label,

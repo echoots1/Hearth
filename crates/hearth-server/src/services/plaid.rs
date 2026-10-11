@@ -55,6 +55,7 @@ async fn ensure_accounts(
         let row = match existing {
             Some(r) => r,
             None => {
+                // Plaid's type/subtype is a guess; people (or the assistant) fix it with accounts.update.
                 let kind = plaid::account_type(&a.kind, a.subtype.as_deref());
                 super::accounts::create(
                     ctx,
