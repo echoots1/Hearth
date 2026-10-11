@@ -120,6 +120,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `goals.list` | Savings goals with projections (reach month at current pace, pace needed for the target date). |
 | `household.settings` | All household settings (pay schedule, cash floor, thresholds, quiet hours, nag, assistant mode and autonomy). |
 | `household.today` | Today's date and month in the household timezone, days left in the month, the next payday, the assistant mode and autonomy settings, and the household name. |
+| `jobs.status` | Every job with its interval, last run (status, summary, error) and whether it is due. |
 | `planned.list` | Planned one-off items. |
 | `questions.list` | Questions and proposals, with answers. |
 | `rules.list` | Categorization rules in priority order. |
@@ -160,6 +161,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `goals.set_saved` | debts_goals | Record how much is saved toward a goal. |
 | `goals.update` | debts_goals | Change a goal or its status. |
 | `household.update_settings` | plans_bills | Change a household setting (pay schedule, cash floor, thresholds, quiet hours, nag). The `assistant` setting is UI-only. |
+| `jobs.run` | always applies | Run a job now (under its lock); returns the finished run with its summary. |
 | `planned.create` | plans_bills | Approve a one-off expense ahead of time so it isn't flagged when it posts. |
 | `planned.update` | plans_bills | Change a planned item or its status (planned, done, dropped). |
 | `questions.answer` | always applies | Answer an open question (people, or the assistant relaying an answer given in chat). |
@@ -1726,6 +1728,35 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
     "key",
     "value"
   ],
+  "type": "object"
+}
+```
+
+</details>
+
+<details><summary><code>jobs.run</code></summary>
+
+```json
+{
+  "properties": {
+    "name": {
+      "description": "`process`, `evaluate`, `notify`, `housekeeping`, or a configured `sync:*`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+<details><summary><code>jobs.status</code></summary>
+
+```json
+{
   "type": "object"
 }
 ```

@@ -201,7 +201,7 @@ estimate and projected low point; each category's bill total and suggested
 plan; sinking-fund set-aside and should-have; debt projections, strategy
 comparison and what-ifs; goal projections; pace.
 
-## 7. Jobs and automation — proposed
+## 7. Jobs and automation — ✓ decided
 
 In-process scheduler (no external cron). Each job takes a Postgres advisory
 lock so two containers never run it at once, records a `job_runs` row with a

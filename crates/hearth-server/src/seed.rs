@@ -9,7 +9,6 @@
 
 use anyhow::{Context as _, bail};
 use chrono::{Datelike, Duration, NaiveDate, Utc};
-use hearth_core::alerts::{AlertCandidate, AlertType, Severity};
 use hearth_core::calendar::Month;
 use hearth_core::money::Cents;
 use hearth_core::settings::{AutonomyArea, DebtStrategy, DebtStrategyKind, PaySchedule};
@@ -395,6 +394,21 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
         "Friday takeout is fine; flag anything over $60.".into(),
     )
     .await?;
+    budget::set_note(
+        &ctx,
+        &owner,
+        c_card_payment,
+        "The monthly card payment; it is money moving, not spending. [no-large-charge] [no-pace]"
+            .into(),
+    )
+    .await?;
+    budget::set_note(
+        &ctx,
+        &owner,
+        c_emergency,
+        "Transfer to Demo Savings on the 2nd. [no-large-charge] [no-pace]".into(),
+    )
+    .await?;
 
     // ── Recurring bills ──
     let b_rent = bill(
@@ -505,7 +519,6 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
     let start = today - Duration::days(90);
     let mut d = start;
     let mut uncategorized: Vec<Uuid> = Vec::new();
-    let mut warehouse_last: Option<Uuid> = None;
     while d <= today {
         let dom = d.day();
         if dom == 1 || dom == 15 {
@@ -706,18 +719,17 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
         }
         if dom == 7 {
             let amt = rng.dollars(150, 225);
-            warehouse_last = Some(
-                txn(
-                    &ctx,
-                    &owner,
-                    card,
-                    d,
-                    "DEMO WAREHOUSE CLUB",
-                    -amt.0,
-                    Some(c_household),
-                )
-                .await?,
-            );
+
+            txn(
+                &ctx,
+                &owner,
+                card,
+                d,
+                "DEMO WAREHOUSE CLUB",
+                -amt.0,
+                Some(c_household),
+            )
+            .await?;
         }
         d += Duration::days(1);
     }
@@ -962,44 +974,7 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
         .await?;
     accounts::set_reported_balance(&ctx, &owner, vcard, Cents::new(0), Some(two_days_ago)).await?;
 
-    // ── Alerts, a question, a proposal, and a pass summary ──
-    let mut pace = AlertCandidate {
-        alert_type: AlertType::CategoryPace,
-        severity: Severity::Warn,
-        title: "Dining out is ahead of plan".into(),
-        detail: "Spent 68% of the plan with 55% of the month gone.".into(),
-        amount_cents: None,
-        dedupe_key: format!("pace:{c_dining}:{month}"),
-        transaction_id: None,
-        category_id: Some(c_dining),
-        bill_id: None,
-        debt_id: None,
-        account_id: None,
-        planned_item_id: None,
-        goal_id: None,
-        context: json!({ "seed": true }),
-    };
-    pace.context = json!({ "seed": true, "ratio_pct": 68 });
-    let large = AlertCandidate {
-        alert_type: AlertType::UnplannedLargeCharge,
-        severity: Severity::Warn,
-        title: "Large charge: Demo Warehouse Club".into(),
-        detail: "No planned item matches this charge.".into(),
-        amount_cents: Some(Cents::new(-21_212)),
-        dedupe_key: format!(
-            "large:{}",
-            warehouse_last.map(|u| u.to_string()).unwrap_or_default()
-        ),
-        transaction_id: warehouse_last,
-        category_id: Some(c_household),
-        bill_id: None,
-        debt_id: None,
-        account_id: Some(card),
-        planned_item_id: None,
-        goal_id: None,
-        context: json!({ "seed": true }),
-    };
-    services::alerts::upsert_candidates(&ctx, "seed", &[pace, large]).await?;
+    // ── A question, a proposal, and a pass summary ──
 
     questions::ask(
         &ctx,
@@ -1042,6 +1017,11 @@ pub async fn run(config: Config, pool: PgPool, force: bool) -> anyhow::Result<()
         "Matched 5 bills and categorized Corner Market as Groceries. Four charges still need a category; I asked about the hardware store one. Proposed raising the Groceries plan to $900.".into(),
     )
     .await?;
+
+    // Real alerts from the real rules, not hand-made ones.
+    crate::jobs::run_named(state.clone(), "process", "seed").await?;
+    let eval = crate::jobs::run_named(state.clone(), "evaluate", "seed").await?;
+    tracing::info!(summary = ?eval.summary, "evaluate ran over the demo");
 
     tracing::info!(
         owner = OWNER_EMAIL,

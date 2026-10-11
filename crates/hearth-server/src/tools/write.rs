@@ -24,6 +24,12 @@ fn args_of<T: serde::Serialize>(v: &T) -> Value {
 // ───────────────────────── accounts (never gated: bookkeeping, not money) ─────────────────────────
 
 #[derive(Deserialize, JsonSchema)]
+pub struct RunJobArgs {
+    /// `process`, `evaluate`, `notify`, `housekeeping`, or a configured `sync:*`.
+    pub name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct CreateAccountArgs {
     pub name: String,
     #[serde(rename = "type")]
@@ -393,6 +399,21 @@ async fn resolve_category(
 
 pub fn tools() -> Vec<ToolDef> {
     vec![
+        tool!(
+            "jobs.run",
+            "Run a job now (under its lock); returns the finished run with its summary.",
+            RunJobArgs,
+            writes = true,
+            area = None,
+            |tc, a| {
+                if crate::jobs::get(&tc.state, &a.name).is_none() {
+                    return Err(services::invalid(format!("unknown job {}", a.name)).into());
+                }
+                crate::jobs::run_named(tc.state.clone(), &a.name, "tool")
+                    .await
+                    .map_err(services::Error::Other)?
+            }
+        ),
         tool!(
             "accounts.create",
             "Add a manual account (checking, savings, credit card, cash…). Synced accounts come from the integrations.",

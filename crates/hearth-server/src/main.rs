@@ -9,6 +9,7 @@ mod auth;
 mod config;
 mod db;
 mod integrations;
+mod jobs;
 mod mcp;
 mod seed;
 #[allow(dead_code)] // consumed by the API, MCP and jobs steps
@@ -96,6 +97,15 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     db::migrate(&pool).await?;
 
     let state = api::AppState::new(config.clone(), pool).await?;
+    if config.jobs.enabled {
+        jobs::spawn_scheduler(state.clone());
+        tracing::info!(
+            tick_seconds = config.jobs.tick_seconds,
+            "job scheduler started"
+        );
+    } else {
+        tracing::info!("JOBS_ENABLED=false: no scheduler in this process");
+    }
     let app = api::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));

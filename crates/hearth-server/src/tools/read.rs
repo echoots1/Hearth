@@ -490,6 +490,18 @@ pub fn tools() -> Vec<ToolDef> {
             }
         ),
         tool!(
+            "jobs.status",
+            "Every job with its interval, last run (status, summary, error) and whether it is due.",
+            Empty,
+            writes = false,
+            area = None,
+            |tc, _a| {
+                crate::jobs::status(&tc.state)
+                    .await
+                    .map_err(services::Error::Other)?
+            }
+        ),
+        tool!(
             "audit.list",
             "The audit log (every write with actor, before and after).",
             AuditArgs,

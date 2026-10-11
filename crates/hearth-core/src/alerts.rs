@@ -334,7 +334,11 @@ pub fn evaluate(s: &Snapshot) -> Vec<AlertCandidate> {
             a.context =
                 serde_json::json!({ "plan_cents": c.plan_cents, "spent_cents": c.activity_cents });
             out.push(a);
-        } else if c.plan_cents.0 > 0 && day >= st.pace_alert.from_day && !d.suppress_pace() {
+        } else if c.is_everyday
+            && c.plan_cents.0 > 0
+            && day >= st.pace_alert.from_day
+            && !d.suppress_pace()
+        {
             let projected = c.activity_cents.mul_div(days_in_month, day as i64);
             let threshold = c.plan_cents.mul_div(st.pace_alert.ratio_pct, 100);
             if projected > threshold {
@@ -631,7 +635,7 @@ mod tests {
             name: name.into(),
             sign: Sign::Spend,
             note: note.into(),
-            is_everyday: false,
+            is_everyday: true,
             bills_total_cents: Cents::ZERO,
             bills_over_plan_cents: Cents::ZERO,
             plan_cents: Cents::dollars(plan),
