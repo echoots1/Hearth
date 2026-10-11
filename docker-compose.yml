@@ -13,7 +13,9 @@
 # hearth-data volume.
 services:
   app:
-    image: ghcr.io/echoots1/hearth:${HEARTH_TAG:-main}
+    # `latest` is the release channel (moves only when a version is tagged);
+    # HEARTH_TAG=main follows every merge, for trying things out.
+    image: ghcr.io/echoots1/hearth:${HEARTH_TAG:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:

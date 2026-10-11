@@ -28,9 +28,11 @@ HTTPS that the household's phones can reach. HTTPS is required for the
 installable app and push notifications, and the Claude app must be able to
 reach the MCP endpoint over the public internet for the connector to work.
 
-Hearth ships as a prebuilt image for `linux/amd64` and `linux/arm64`:
-`ghcr.io/echoots1/hearth:main` follows the `main` branch (`latest` is the
-same until there are releases; `sha-<short>` pins one commit). Postgres 16
+Hearth ships as a prebuilt image for `linux/amd64` and `linux/arm64` with
+two channels: `ghcr.io/echoots1/hearth:latest` is the **release** channel
+(it moves only when a version is tagged, and the compose files pull it) and
+`:main` is the **development** build that follows every merge. A version
+such as `:0.1.0` or a commit's `:sha-<short>` pins one build. Postgres 16
 runs beside it. Nothing needs compiling.
 
 ### Docker host with a `.env` file
@@ -101,8 +103,9 @@ has every setting written inline.
    says `setup token`), then **More → Server** and set the **Public URL**.
 
 Later edits to those values go through **Installed → hearth → Edit**, which
-reopens the same YAML. Saving it also pulls the newest image (the file sets
-`pull_policy: always`), so that is the update button as well.
+reopens the same YAML. Saving it also pulls the newest release (the file
+sets `pull_policy: always` on the `latest` tag), so that is the update
+button as well.
 
 To load the demo household or run any other `hearth` command, open the
 TrueNAS shell (**System → Shell**) and run it inside the app container:
@@ -204,25 +207,32 @@ restart needed.
 
 ### Operate it
 
-**Update.** The `main` tag moves with the repository: it is rebuilt by a
-push to `main` that changes the app itself (the Rust and web sources, the
-Cargo manifests, the Dockerfile). Documentation, compose and deploy-file
-changes do not produce a new image, so a pull after one of those is a no-op.
+**Update.** The compose files pull `latest`, which moves only when a
+release is tagged, so an update is always a published release and never a
+half-finished merge. Each release is listed with its notes at
+<https://github.com/echoots1/Hearth/releases>.
 
 ```sh
 docker compose pull && docker compose up -d
 ```
 
 On TrueNAS the YAML sets `pull_policy: always`, so **Installed → hearth →
-Edit → Save** pulls the newest `main` and redeploys. Database migrations run
+Edit → Save** pulls the newest release and redeploys. Database migrations run
 automatically when the new version starts; take a backup first (below),
 because migrations are forward-only and the way back from a bad update is
 the backup, not an older image.
 
-**Pin or roll back.** Every image build is also tagged `sha-<short>` (the
-first seven characters of the commit it was built from). Set `HEARTH_TAG=sha-abc1234` in `.env`
-(or edit the `image:` line on TrueNAS) to stay on a known build. The tags are
-listed at <https://github.com/echoots1/Hearth/pkgs/container/hearth>.
+**Follow development instead.** `HEARTH_TAG=main` in `.env` (or `:main` on
+the TrueNAS `image:` line) follows every merge to `main` that changes the
+app; it is where things land before they are released. Documentation and
+deploy-file changes do not rebuild it.
+
+**Pin or roll back.** Every release is also tagged by version (`0.1.0`,
+`0.1`) and every build by commit (`sha-<short>`, the first seven characters
+of the commit it was built from). Set `HEARTH_TAG=0.1.0` or
+`HEARTH_TAG=sha-abc1234` in `.env` (or edit the `image:` line on TrueNAS)
+to stay on a known build. The tags are listed at
+<https://github.com/echoots1/Hearth/pkgs/container/hearth>.
 
 **Back up.** Everything lives in two volumes: `hearth-db` (Postgres) and
 `hearth-data` (the generated session and encryption keys, two small files).
@@ -438,7 +448,7 @@ environment or the default applies.
 | `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits); the last entry, which the proxy appended, is used. In the app: **Behind a reverse proxy**. |
 | `MCP_ALLOWED_HOSTS` | derived from the public URL + localhost | Comma-separated `Host` values the MCP endpoint accepts. Setting it replaces the derived list; **Extra MCP host names** in the app adds to either. |
 | `PORT` | `3000` | Host port Compose publishes. The container always listens on 3000. |
-| `HEARTH_TAG` | `main` | Image tag Compose pulls: `main`, `latest`, `sha-<short>`, or a version once there are releases. |
+| `HEARTH_TAG` | `latest` | Image tag Compose pulls: `latest` (releases), `main` (every merge), a version such as `0.1.0`, or `sha-<short>`. |
 | `APP_SECRET` | generated | 32+ random characters. Signs sessions and one-tap notification links. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it signs everyone out. |
 | `APP_ENCRYPTION_KEY` | generated | 32+ random characters. Encrypts everything secret at rest; the actual key is derived with argon2id and a per-install salt kept in the database, so a passphrase you typed yourself is not brute-forceable from a dump. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it means re-entering the secrets. |
 | `HEARTH_DATA_DIR` | `/app/data` in the image, `./data` otherwise | Where generated keys are kept. The compose files mount the `hearth-data` volume there. |
