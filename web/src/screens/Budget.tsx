@@ -24,7 +24,7 @@ export function Budget() {
 
   return (
     <>
-      <div className="flex h-11 items-center justify-between">
+      <div className="flex h-11 items-center justify-between lg:hidden">
         <Wordmark />
         <div className="flex gap-2">
           {t.assistant.mode === "api" && (

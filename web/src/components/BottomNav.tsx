@@ -13,7 +13,7 @@ export function BottomNav({ badge }: { badge?: number }) {
   return (
     <nav
       aria-label="Main"
-      className="bg-card fixed right-4 left-4 z-40 mx-auto grid h-16 max-w-md grid-cols-5 items-center rounded-[32px] px-2 shadow-[var(--shadow-nav)]"
+      className="bg-card fixed right-4 left-4 z-40 mx-auto grid h-16 max-w-md grid-cols-5 items-center rounded-[32px] px-2 shadow-[var(--shadow-nav)] lg:hidden"
       style={{ bottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
     >
       {items.map((it) => (

@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { BottomNav } from "./components/BottomNav";
+import { SideNav } from "./components/SideNav";
 import { Spinner } from "./components/ui";
 import { useInboxCounts } from "./lib/data";
 import { SessionProvider, useSession } from "./lib/session";
@@ -26,10 +27,16 @@ import { Users } from "./screens/more/Users";
 function Shell() {
   const counts = useInboxCounts();
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col gap-4 px-4 pb-32 pt-[max(1rem,env(safe-area-inset-top))]">
-      <Outlet />
+    <>
+      {/* Phones get the bottom tab bar; from `lg` up a fixed left rail takes its place and the page widens. */}
+      <SideNav badge={counts.total} />
+      <div className="lg:pl-64">
+        <main className="mx-auto flex min-h-full max-w-md flex-col gap-4 px-4 pb-32 pt-[max(1rem,env(safe-area-inset-top))] lg:max-w-3xl lg:gap-5 lg:px-10 lg:pt-8 lg:pb-12">
+          <Outlet />
+        </main>
+      </div>
       <BottomNav badge={counts.total} />
-    </div>
+    </>
   );
 }
 

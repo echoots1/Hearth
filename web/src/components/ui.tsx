@@ -114,8 +114,8 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label={title}>
       <button type="button" aria-label="Close" onClick={onClose} className="bg-ink/40 absolute inset-0" />
-      <div className="bg-ground relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-[28px] px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-[28px]">
-        <div className="bg-line mx-auto mb-3 h-1 w-10 rounded-full" aria-hidden />
+      <div className="bg-ground relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-[28px] px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-[28px] lg:max-w-lg lg:px-6 lg:pb-6">
+        <div className="bg-line mx-auto mb-3 h-1 w-10 rounded-full sm:hidden" aria-hidden />
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[17px] font-extrabold">{title}</h2>
           <button type="button" onClick={onClose} className="icon-btn" aria-label="Close">
@@ -249,7 +249,7 @@ export function Icon({ name, size = 20, className = "" }: { name: IconName; size
 
 export function PageHeader({ title, subtitle, back, right }: { title: ReactNode; subtitle?: ReactNode; back?: string | (() => void); right?: ReactNode }) {
   return (
-    <div className="flex h-11 items-center justify-between">
+    <div className="flex h-11 items-center justify-between lg:h-12 lg:justify-start lg:gap-4">
       {back ? (
         typeof back === "string" ? (
           <Link to={back} className="icon-btn" aria-label="Back">
@@ -261,13 +261,13 @@ export function PageHeader({ title, subtitle, back, right }: { title: ReactNode;
           </button>
         )
       ) : (
-        <div className="w-11" />
+        <div className="w-11 lg:hidden" />
       )}
-      <div className="flex flex-col items-center leading-tight">
-        <span className="text-[17px] font-extrabold">{title}</span>
-        {subtitle && <span className="text-muted text-[12px] font-semibold">{subtitle}</span>}
+      <div className="flex flex-col items-center leading-tight lg:flex-1 lg:items-start">
+        <span className="text-[17px] font-extrabold lg:text-[22px] lg:tracking-[-0.02em]">{title}</span>
+        {subtitle && <span className="text-muted text-[12px] font-semibold lg:text-[13px]">{subtitle}</span>}
       </div>
-      {right ?? <div className="w-11" />}
+      {right ?? <div className="w-11 lg:hidden" />}
     </div>
   );
 }
