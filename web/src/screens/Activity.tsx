@@ -8,6 +8,7 @@ import { useActions, useAlerts, useGroups, useQuestions, useReviewQueue, useRule
 import { ago, addDays, longDate, shortDate, todayIso } from "../lib/dates";
 import { dollars, money, signed } from "../lib/money";
 import { invalidate, useMutation } from "../lib/query";
+import { useSession } from "../lib/session";
 import type { Alert, AssistantAction, Question, ReviewItem, Rule, Transaction } from "../lib/types";
 
 type Tab = "inbox" | "all" | "done";
@@ -331,6 +332,7 @@ export function RuleSheet({ open, onClose, seed, rule }: { open: boolean; onClos
     ["rules.", "transactions.", "budget."],
   );
   const del = useMutation(() => tool("rules.delete", { rule_id: rule!.id }), ["rules."]);
+  const owner = useSession().me?.role === "owner";
   return (
     <Sheet open={open} onClose={onClose} title={rule ? "Edit rule" : "Make a rule"}>
       <div className="flex flex-col gap-3">
@@ -348,7 +350,7 @@ export function RuleSheet({ open, onClose, seed, rule }: { open: boolean; onClos
       </div>
       <ErrorNote error={m.error || del.error} />
       <SheetActions>
-        {rule && <button type="button" className="btn-light text-attention" disabled={del.busy} onClick={async () => { if ((await del.run()) !== undefined) onClose(); }}>Delete</button>}
+        {rule && owner && <button type="button" className="btn-light text-attention" disabled={del.busy} onClick={async () => { if ((await del.run()) !== undefined) onClose(); }}>Delete</button>}
         <button type="button" className="btn-light" onClick={onClose}>Cancel</button>
         <button type="button" className="btn-dark" disabled={m.busy || !f.pattern.trim() || (!f.ignore && !f.category_id)} onClick={async () => { if ((await m.run()) !== undefined) onClose(); }}>{rule ? "Save" : "Create and apply"}</button>
       </SheetActions>

@@ -15,7 +15,8 @@ type View = {
 export function Server() {
   const { me } = useSession();
   const owner = me?.role === "owner";
-  const q = useQuery<View>("settings.server", () => api.get("/api/settings/server"));
+  // The view names environment values and the data directory, so only the owner gets it.
+  const q = useQuery<View>(owner ? "settings.server" : null, () => api.get("/api/settings/server"));
   const [s, setS] = useState<Settings | null>(null);
   const [hosts, setHosts] = useState("");
   useEffect(() => {
@@ -25,6 +26,14 @@ export function Server() {
     }
   }, [q.data]);
   const save = useMutation((next: Settings) => api.put("/api/settings/server", next), ["settings.", "jobs."]);
+  if (!owner) {
+    return (
+      <>
+        <PageHeader title="Server" subtitle="how Hearth is reached" back="/more" />
+        <ErrorNote error="Only the owner can see and change the server settings." />
+      </>
+    );
+  }
   if (!q.data || !s) return q.error ? <ErrorNote error={q.error.message} /> : <Spinner />;
   const v = q.data;
   const num = (x: string): number | null => (x.trim() === "" ? null : Math.max(0, Math.floor(Number(x))));
@@ -34,7 +43,6 @@ export function Server() {
   return (
     <>
       <PageHeader title="Server" subtitle="how Hearth is reached" back="/more" />
-      {!owner && <ErrorNote error="Only the owner can change these." />}
       <Card className="divider overflow-hidden">
         <CardHead title="Address" right={v.effective.trust_proxy ? "behind a proxy" : "direct"} />
         <div className="flex flex-col gap-3 p-4">

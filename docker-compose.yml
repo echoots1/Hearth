@@ -7,10 +7,21 @@
 # shell. Only the database password is needed; everything else is set in the
 # app (More → Server, Integrations, Notifications) or generated on first
 # start. deploy/truenas/ has a copy with literal values.
+#
+# The app container runs as a non-root user with a read-only root filesystem,
+# no Linux capabilities and no privilege escalation; it writes only to the
+# hearth-data volume.
 services:
   app:
     image: ghcr.io/echoots1/hearth:${HEARTH_TAG:-main}
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - path: .env
         required: false
@@ -25,7 +36,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-hearth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hearth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-hearth}
       DATABASE_URL: ${DATABASE_URL:-}
       # The container always listens on 3000; PORT in .env is the host port below.
@@ -43,9 +54,11 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hearth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hearth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-hearth}
     volumes:
       - hearth-db:/var/lib/postgresql/data

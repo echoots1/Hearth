@@ -68,9 +68,13 @@ compose file. The preflight reads whatever Compose resolves, so both ways get
 checked.
 
 Open `http://<host>:3000`: the first visit creates the owner account and
-names the household. Then **More → Server** and set the **Public URL** to
-what people will type (the `https://` address once you have one, see
-below). Add people under **More → People**.
+names the household. It asks for the **setup token**: while no account
+exists, every start prints one line like `setup token: …` (`docker compose
+logs app | grep "setup token"`), so a stranger who finds the address before
+you do cannot become the owner. Then **More → Server** and set the **Public
+URL** to what people will type (the `https://` address once you have one,
+see below). Add people under **More → People**; the owner can remove them
+there too.
 
 To update later:
 
@@ -92,8 +96,9 @@ has every setting written inline.
    allocated` at install time; pick another, such as `3456`, and change only
    the left side of the `ports:` line).
 3. **Install.** The app shows healthy once Postgres is up and Hearth has run
-   its migrations. Open `http://<nas-ip>:<port>`, create the owner account,
-   then **More → Server** and set the **Public URL**.
+   its migrations. Open `http://<nas-ip>:<port>`, create the owner account
+   with the setup token from **Installed → hearth → Logs** (the line that
+   says `setup token`), then **More → Server** and set the **Public URL**.
 
 Later edits to those values go through **Installed → hearth → Edit**, which
 reopens the same YAML. Saving it also pulls the newest image (the file sets
@@ -134,7 +139,11 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ### Reverse proxy
 
 Point your proxy at port `3000` (or `PORT`) and turn on **Behind a reverse
-proxy** under **More → Server**. The
+proxy** under **More → Server**. With that on, Hearth takes the client
+address from the *last* `X-Forwarded-For` entry, the one your proxy appended
+(both snippets below do that), so a client cannot spoof its way past the
+sign-in rate limit. Keep the `Host` header intact: the same-origin check on
+writes and the MCP host allow-list both compare against it. The
 MCP endpoint streams responses, so the proxy must pass `text/event-stream`
 through without buffering. Caddy does all of this with one block and fetches
 the certificate itself:
@@ -248,7 +257,8 @@ last run, summary or error.
 
 **Start over.** `docker compose down -v` removes the containers and the
 database volume (TrueNAS: **Installed → hearth → ⋮ → Delete** with the
-volume). The first visit after `up -d` creates a new owner again.
+volume). The first visit after `up -d` creates a new owner again, with the
+fresh setup token from the log.
 
 **Run a command inside the app:** `docker compose exec app hearth --help`
 lists them (`seed`, `migrate`, `tools`). On TrueNAS use the shell:
@@ -280,8 +290,11 @@ connector):
 
 If your Claude client has no request-headers field, use the key-in-URL form
 instead: `https://<your host>/mcp/hearth_…` with no header. It works the
-same; the key then sits in the client's config and your proxy's access log,
-so revoke it from **More → API keys** if that ever worries you.
+same, but the key then sits in the client's config, in your proxy's access
+log and in any log the client keeps. Prefer the header form where you can,
+give a key-in-URL connector a `read` key unless it must write, and revoke it
+from **More → API keys** if that ever worries you. Hearth itself redacts the
+key from its own log and sends `Referrer-Policy: no-referrer`.
 
 In a conversation, open the **+** menu at the lower left → **Connectors**
 and switch Hearth on. Then just talk: "we added a streaming service, $11.99
@@ -395,7 +408,11 @@ Budget screen), a daily pass Hearth runs itself at the time you set, and
 | `connecting to Postgres … invalid port number` (or `invalid URL`) | `DATABASE_URL` is set and its password contains `@ : / # %`. Unset `DATABASE_URL` and use `POSTGRES_PASSWORD`, which takes any characters, or percent-encode the password in the URL. |
 | Container is `Up (unhealthy)` and connections are reset | The app is listening on another port inside the container, usually because `PORT` was changed to the host port. `docker logs` shows `hearth listening addr=0.0.0.0:NNNN`. Keep `PORT` at 3000 (or unset) and change only the left side of the `ports:` line. |
 | Container restarts in a loop | `docker compose logs app`. Usual causes: a wrong database password, `APP_SECRET` set but shorter than 32 characters, the data directory not writable (mount the `hearth-data` volume or set the keys), or Postgres not ready yet (it settles within a minute). |
-| `429 Too Many Requests` | Sign-in allows 10 attempts per 5 minutes per address and `/mcp` 300 requests per minute. Behind a proxy without `TRUST_PROXY=true` every client shares the proxy's address. |
+| `429 Too Many Requests` | Sign-in and setup allow 10 attempts per 5 minutes per address and `/mcp` 300 requests per minute. Behind a proxy without `TRUST_PROXY=true` every client shares the proxy's address. |
+| `wrong setup token` on the first visit | The token is printed by the app container every time it starts with no accounts: `docker compose logs app \| grep "setup token"` (TrueNAS: **Installed → hearth → Logs**). Restarting the container prints a new one. |
+| `cross-site request refused` | A write reached `/api` from another origin. Usually the proxy rewrote the `Host` header; pass it through unchanged (`proxy_set_header Host $host`). |
+| Plaid webhooks answer `401` | Deliveries must carry Plaid's `Plaid-Verification` signature; only Plaid can produce it. A `404` means Plaid is not configured. |
+| Push subscription refused | Browsers subscribe through their vendor's push service; Hearth refuses endpoints that look like a private host (an IP address, `localhost`, `.local`, `.lan`, `.internal`). |
 | Plaid link fails before Link opens | The environment chosen under **Bank feeds** doesn't match the key pair; **Check the keys** shows Plaid's own error. |
 
 The tool reference for the connector is in `docs/MCP.md`.
@@ -415,12 +432,12 @@ environment or the default applies.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `APP_URL` | `http://localhost:3000` | Public URL. `https` makes cookies Secure; notification links and the connector URL are built from it. In the app: **Public URL**. |
-| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits). In the app: **Behind a reverse proxy**. |
+| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for the client address (rate limits); the last entry, which the proxy appended, is used. In the app: **Behind a reverse proxy**. |
 | `MCP_ALLOWED_HOSTS` | derived from the public URL + localhost | Comma-separated `Host` values the MCP endpoint accepts. Setting it replaces the derived list; **Extra MCP host names** in the app adds to either. |
 | `PORT` | `3000` | Host port Compose publishes. The container always listens on 3000. |
 | `HEARTH_TAG` | `main` | Image tag Compose pulls: `main`, `latest`, `sha-<short>`, or a version once there are releases. |
 | `APP_SECRET` | generated | 32+ random characters. Signs sessions and one-tap notification links. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it signs everyone out. |
-| `APP_ENCRYPTION_KEY` | generated | 32+ random characters. Encrypts everything secret at rest. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it means re-entering the secrets. |
+| `APP_ENCRYPTION_KEY` | generated | 32+ random characters. Encrypts everything secret at rest; the actual key is derived with argon2id and a per-install salt kept in the database, so a passphrase you typed yourself is not brute-forceable from a dump. Generated on first start into `HEARTH_DATA_DIR` when unset; changing it means re-entering the secrets. |
 | `HEARTH_DATA_DIR` | `/app/data` in the image, `./data` otherwise | Where generated keys are kept. The compose files mount the `hearth-data` volume there. |
 | `LOG_LEVEL` | `info,sqlx=warn` | Tracing filter. |
 | `LOG_FORMAT` | `text` | `json` for structured logs. |

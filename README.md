@@ -48,8 +48,10 @@ scripts/preflight.sh
 docker compose up -d
 ```
 
-Open `http://<host>:3000`; the first visit creates the owner account, and
-**More → Server** takes the public URL. To look around
+Open `http://<host>:3000`; the first visit creates the owner account. It asks
+for the **setup token** the server printed when it started (`docker compose
+logs app`), so nobody else can claim a fresh instance. Then **More → Server**
+takes the public URL. To look around
 first, `docker compose exec app hearth seed` loads an obviously fake demo
 household. On TrueNAS SCALE, paste `deploy/truenas/docker-compose.yml` into
 **Apps → Discover Apps → ⋮ → Install via YAML**.

@@ -3,9 +3,12 @@ import { Card, CardHead, ErrorNote, Field, MoneyInput, PageHeader, Spinner, Togg
 import { tool } from "../../lib/api";
 import { useSettings } from "../../lib/data";
 import { useMutation } from "../../lib/query";
+import { useSession } from "../../lib/session";
 import type { Settings } from "../../lib/types";
 
 export function SettingsScreen() {
+  const { me } = useSession();
+  const owner = me?.role === "owner";
   const settings = useSettings();
   const [s, setS] = useState<Settings | null>(null);
   useEffect(() => { if (settings.data) setS(settings.data); }, [settings.data]);
@@ -16,6 +19,8 @@ export function SettingsScreen() {
   return (
     <>
       <PageHeader title="Settings" back="/more" />
+      {!owner && <ErrorNote error="Only the owner can change settings." />}
+      <fieldset disabled={!owner} className="contents">
       <Card className="divider overflow-hidden">
         <CardHead title="Paydays" />
         <div className="flex flex-col gap-3 p-4">
@@ -71,6 +76,7 @@ export function SettingsScreen() {
           </div>
         </div>
       </Card>
+      </fieldset>
       <ErrorNote error={save.error} onClose={save.clearError} />
       <p className="text-faint text-center text-[11px] font-semibold">Changes save as you make them.</p>
     </>

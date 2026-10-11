@@ -41,6 +41,9 @@ pub struct SetupBody {
     email: String,
     display_name: String,
     password: String,
+    /// Printed to the server log on every start while no account exists.
+    #[serde(default)]
+    setup_token: String,
 }
 
 #[derive(Serialize)]
@@ -74,7 +77,9 @@ fn session_cookie(state: &AppState, value: String, max_age: Duration) -> Cookie<
     c
 }
 
-/// First run: create the owner and name the household. Refused once any user exists.
+/// First run: create the owner and name the household. Needs the setup token
+/// from the server log; refused once any user exists. The insert runs under
+/// an advisory lock so two first visits cannot both become the owner.
 pub async fn setup(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -86,10 +91,38 @@ pub async fn setup(
     if n > 0 {
         return Err(ApiError::forbidden("setup is already complete"));
     }
+    if !state.setup_token.matches(&b.setup_token) {
+        return Err(ApiError::forbidden(
+            "wrong setup token: it is printed in the server log (`docker compose logs app`, look for \"setup token\")",
+        ));
+    }
     passwords::validate(&b.password).map_err(ApiError::bad_request)?;
     if !b.email.contains('@') {
         return Err(ApiError::bad_request("a valid email is required"));
     }
+    let hash = passwords::hash(&b.password)
+        .map_err(|_| ApiError::bad_request("could not hash password"))?;
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("select pg_advisory_xact_lock(hashtext('hearth:setup'))")
+        .execute(&mut *tx)
+        .await?;
+    let n: i64 = sqlx::query_scalar("select count(*) from users")
+        .fetch_one(&mut *tx)
+        .await?;
+    if n > 0 {
+        return Err(ApiError::forbidden("setup is already complete"));
+    }
+    let u = sqlx::query_as::<_, User>(
+        "insert into users (household_id, email, display_name, password_hash, role) values ($1, $2, $3, $4, 'owner') returning *",
+    )
+    .bind(state.household_id)
+    .bind(b.email.trim().to_lowercase())
+    .bind(b.display_name.trim())
+    .bind(hash)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    state.setup_token.clear();
     let ctx = state.ctx().await?;
     let h = services::household::update(
         &ctx,
@@ -101,16 +134,16 @@ pub async fn setup(
         },
     )
     .await?;
-    let hash = passwords::hash(&b.password)
-        .map_err(|_| ApiError::bad_request("could not hash password"))?;
-    let u = sqlx::query_as::<_, User>(
-        "insert into users (household_id, email, display_name, password_hash, role) values ($1, $2, $3, $4, 'owner') returning *",
+    services::audit::record(
+        &ctx.pool,
+        ctx.household_id,
+        &Actor::System,
+        "user.create",
+        "users",
+        u.id,
+        None::<&()>,
+        Some(&serde_json::json!({ "email": u.email, "role": u.role, "setup": true })),
     )
-    .bind(state.household_id)
-    .bind(b.email.trim().to_lowercase())
-    .bind(b.display_name.trim())
-    .bind(hash)
-    .fetch_one(&state.pool)
     .await?;
     let s = sessions::create(&state.pool, u.id).await?;
     let jar = jar.add(session_cookie(

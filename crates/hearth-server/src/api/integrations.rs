@@ -1,6 +1,8 @@
 //! Integrations: status, Plaid Link, Privacy.com sync, CSV import.
 
+use axum::body::Bytes;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::{Json, http::StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -396,11 +398,55 @@ pub async fn plaid_remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Plaid posts item and transaction webhooks here. Deliveries are a hint to
-/// sync sooner; the scheduled sync is the source of truth, so this only logs.
-pub async fn plaid_webhook(Json(v): Json<Value>) -> StatusCode {
-    tracing::info!(webhook_type = %v.get("webhook_type").and_then(|w| w.as_str()).unwrap_or("?"), code = %v.get("webhook_code").and_then(|w| w.as_str()).unwrap_or("?"), "plaid webhook");
-    StatusCode::OK
+/// Plaid posts item and transaction webhooks here. Every delivery must carry a
+/// valid `Plaid-Verification` signature; a transactions or item webhook then
+/// brings the next sync forward. The scheduled sync stays the source of truth.
+pub async fn plaid_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let ctx = state.ctx().await?;
+    let Some((cfg, _)) = integ::plaid(&ctx, &state.config).await? else {
+        return Err(ApiError::not_found());
+    };
+    let unauthorized = |m: &str| ApiError {
+        status: StatusCode::UNAUTHORIZED,
+        message: m.to_string(),
+    };
+    let jwt = headers
+        .get("plaid-verification")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| unauthorized("missing Plaid-Verification header"))?;
+    let client = Plaid::new(&cfg).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    if let Err(e) = client
+        .verify_webhook(jwt, &body, chrono::Utc::now().timestamp())
+        .await
+    {
+        tracing::warn!(error = %e, "plaid webhook rejected");
+        return Err(unauthorized("webhook verification failed"));
+    }
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let kind = v
+        .get("webhook_type")
+        .and_then(|w| w.as_str())
+        .unwrap_or("?")
+        .to_string();
+    let code = v
+        .get("webhook_code")
+        .and_then(|w| w.as_str())
+        .unwrap_or("?")
+        .to_string();
+    tracing::info!(webhook_type = %kind, code = %code, "plaid webhook");
+    if matches!(kind.as_str(), "TRANSACTIONS" | "ITEM") {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::jobs::run_named(state, "sync:plaid", "webhook").await {
+                tracing::warn!(error = %e, "plaid webhook: sync failed to start");
+            }
+        });
+    }
+    Ok(StatusCode::OK)
 }
 
 pub async fn privacy_sync(

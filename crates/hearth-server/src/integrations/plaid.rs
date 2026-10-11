@@ -1,12 +1,45 @@
 //! Plaid: Link token, public-token exchange, `/transactions/sync`, item removal.
 //! Amounts are parsed from their decimal text; no floats anywhere.
 
+use base64::Engine;
 use hearth_core::money::Cents;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use sha2::Digest;
 
 use crate::config::PlaidConfig;
+
+const B64URL: base64::engine::GeneralPurpose = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+/// The public JWK Plaid signs webhooks with.
+#[derive(Debug, Deserialize)]
+pub struct WebhookKey {
+    pub x: String,
+    pub y: String,
+    #[serde(default)]
+    pub expired_at: Option<Value>,
+}
+
+/// ES256 over `signing_input` with a P-256 public key given as JWK `x`/`y`
+/// coordinates and a raw 64-byte `r ‖ s` signature.
+pub fn verify_es256(
+    signing_input: &[u8],
+    sig: &[u8],
+    x_b64: &str,
+    y_b64: &str,
+) -> anyhow::Result<()> {
+    use p256::ecdsa::signature::Verifier;
+    let mut sec1 = vec![0x04];
+    sec1.extend_from_slice(&B64URL.decode(x_b64)?);
+    sec1.extend_from_slice(&B64URL.decode(y_b64)?);
+    let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
+        .map_err(|_| anyhow::anyhow!("bad webhook signing key"))?;
+    let sig = p256::ecdsa::Signature::from_slice(sig)
+        .map_err(|_| anyhow::anyhow!("bad webhook signature"))?;
+    key.verify(signing_input, &sig)
+        .map_err(|_| anyhow::anyhow!("webhook signature does not verify"))
+}
 
 pub struct Plaid {
     client: reqwest::Client,
@@ -169,6 +202,58 @@ impl Plaid {
         Ok(r.link_token)
     }
 
+    /// Verify a webhook delivery: the `Plaid-Verification` JWT (ES256, key
+    /// fetched by `kid`) must sign the header, be at most five minutes old,
+    /// and carry the SHA-256 of the exact body received.
+    pub async fn verify_webhook(&self, jwt: &str, body: &[u8], now: i64) -> anyhow::Result<()> {
+        let mut parts = jwt.trim().split('.');
+        let (Some(h), Some(c), Some(sig), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            anyhow::bail!("malformed verification header");
+        };
+        let header: Value = serde_json::from_slice(&B64URL.decode(h)?)?;
+        if header.get("alg").and_then(Value::as_str) != Some("ES256") {
+            anyhow::bail!("unexpected webhook signature algorithm");
+        }
+        let kid = header
+            .get("kid")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("webhook signature names no key"))?;
+        #[derive(Deserialize)]
+        struct R {
+            key: WebhookKey,
+        }
+        let r: R = self
+            .post("/webhook_verification_key/get", json!({ "key_id": kid }))
+            .await?;
+        if r.key.expired_at.as_ref().is_some_and(|e| !e.is_null()) {
+            anyhow::bail!("webhook signing key has expired");
+        }
+        verify_es256(
+            format!("{h}.{c}").as_bytes(),
+            &B64URL.decode(sig)?,
+            &r.key.x,
+            &r.key.y,
+        )?;
+        let claims: Value = serde_json::from_slice(&B64URL.decode(c)?)?;
+        let iat = claims
+            .get("iat")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| anyhow::anyhow!("webhook signature has no timestamp"))?;
+        if (now - iat).abs() > 5 * 60 {
+            anyhow::bail!("webhook signature is too old");
+        }
+        let digest: String = sha2::Sha256::digest(body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if claims.get("request_body_sha256").and_then(Value::as_str) != Some(digest.as_str()) {
+            anyhow::bail!("webhook body does not match its signature");
+        }
+        Ok(())
+    }
+
     pub async fn exchange(&self, public_token: &str) -> anyhow::Result<(String, String)> {
         #[derive(Deserialize)]
         struct R {
@@ -256,5 +341,26 @@ pub fn account_type(kind: &str, subtype: Option<&str>) -> crate::db::models::Acc
         ("loan", _) => T::Loan,
         ("investment", _) | ("brokerage", _) => T::Investment,
         _ => T::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn es256_roundtrip_with_jwk_coordinates() {
+        use p256::ecdsa::{SigningKey, signature::Signer};
+        let signing = SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let point = signing.verifying_key().to_encoded_point(false);
+        let x = B64URL.encode(point.x().unwrap());
+        let y = B64URL.encode(point.y().unwrap());
+        let input = b"eyJhbGciOiJFUzI1NiJ9.eyJpYXQiOjF9";
+        let sig: p256::ecdsa::Signature = signing.sign(input);
+        assert!(verify_es256(input, &sig.to_bytes(), &x, &y).is_ok());
+        assert!(verify_es256(b"tampered", &sig.to_bytes(), &x, &y).is_err());
+        let other = SigningKey::from_slice(&[10u8; 32]).unwrap();
+        let other_sig: p256::ecdsa::Signature = other.sign(input);
+        assert!(verify_es256(input, &other_sig.to_bytes(), &x, &y).is_err());
     }
 }

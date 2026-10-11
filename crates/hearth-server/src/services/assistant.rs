@@ -37,6 +37,11 @@ pub struct WriteIntent {
     pub bill_id: Option<Uuid>,
 }
 
+/// Tools that remove data outright; the assistant can only propose these.
+pub fn is_destructive(tool: &str) -> bool {
+    tool.ends_with(".delete") || tool == "budget.delete_plan"
+}
+
 pub async fn autonomy_for(ctx: &Ctx, area: CoreArea) -> Result<Autonomy> {
     let s = super::settings::load(ctx).await?;
     Ok(s.assistant.autonomy_for(area))
@@ -63,7 +68,13 @@ where
             )>,
         >,
 {
-    if actor.is_assistant() && autonomy_for(ctx, intent.area).await? == Autonomy::Backseat {
+    // Destructive tools always go through a person, whatever the autonomy
+    // position: text the assistant reads (descriptions, notes, imports) is
+    // not trusted enough to delete on.
+    let must_propose = actor.is_assistant()
+        && (is_destructive(&intent.tool)
+            || autonomy_for(ctx, intent.area).await? == Autonomy::Backseat);
+    if must_propose {
         let q = super::questions::propose(
             ctx,
             actor,

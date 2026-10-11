@@ -15,6 +15,15 @@ services:
     # Installed → hearth → Edit → Save is the update button.
     pull_policy: always
     restart: unless-stopped
+    # Non-root, read-only root filesystem, no capabilities, no privilege
+    # escalation; the app writes only to the hearth-data volume.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       # The bundled Postgres (the db service below).
       POSTGRES_HOST: "db"
@@ -47,6 +56,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: "hearth"
       POSTGRES_PASSWORD: *postgres-password
