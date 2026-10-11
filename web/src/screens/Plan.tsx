@@ -21,9 +21,10 @@ export function Plan() {
   const t = today.data;
   const all = bills.data ?? [];
   const active = all.filter((b) => b.status === "active");
-  const monthly = all.filter((b) => b.cadence_months === 1);
-  const yearly = all.filter((b) => b.cadence_months === 12);
-  const everyN = all.filter((b) => b.cadence_months !== 1 && b.cadence_months !== 12);
+  const perPaycheck = all.filter((b) => b.per_paycheck);
+  const monthly = all.filter((b) => !b.per_paycheck && b.cadence_months === 1);
+  const yearly = all.filter((b) => !b.per_paycheck && b.cadence_months === 12);
+  const everyN = all.filter((b) => !b.per_paycheck && b.cadence_months !== 1 && b.cadence_months !== 12);
 
   return (
     <>
@@ -35,7 +36,8 @@ export function Plan() {
         onPlanned={(id) => { const p = (planned.data ?? []).find((x) => x.id === id); if (p) setEditPlanned(p); }}
       />
 
-      <SectionTitle title="Recurring bills" right={`${dollars(active.reduce((s, b) => s + (b.monthly_equivalent_cents ?? Math.round(b.amount_cents / b.cadence_months)), 0))}/mo`} />
+      <SectionTitle title="Recurring bills" right={`${dollars(active.reduce((s, b) => s + (b.monthly_equivalent_cents ?? Math.round(b.amount_cents / Math.max(1, b.cadence_months))), 0))}/mo`} />
+      <BillGroup title="Every paycheck" bills={perPaycheck} today={t} onTap={setEditBill} />
       <BillGroup title="Monthly" bills={monthly} today={t} onTap={setEditBill} />
       <BillGroup title="Every few months" bills={everyN} today={t} onTap={setEditBill} />
       <BillGroup title="Yearly" bills={yearly} today={t} onTap={setEditBill} />
@@ -86,7 +88,7 @@ function TimelineCard({ today, onBill, onPlanned }: { today: Today; onBill: (id:
                 {v.headroom_cents >= 0 ? `${dollars(v.headroom_cents)} above the floor at the low` : `${dollars(-v.headroom_cents)} below the floor at the low`}
               </span>
               <span className="text-muted text-[12px] font-semibold">
-                {t.entries.filter((e) => e.kind === "paycheck").length} paycheck{t.entries.filter((e) => e.kind === "paycheck").length === 1 ? "" : "s"} · +{dollars(t.income_cents)} · bills −{dollars(t.bills_cents)} · everyday −{dollars(t.everyday_cents)}{t.planned_cents > 0 && ` · one-offs −${dollars(t.planned_cents)}`}
+                {t.entries.filter((e) => e.kind === "paycheck").length} paycheck{t.entries.filter((e) => e.kind === "paycheck").length === 1 ? "" : "s"} · +{dollars(t.income_cents)} · bills −{dollars(t.bills_cents)} · everyday −{dollars(t.everyday_cents)}{t.plan_cents > 0 && ` · other plans −${dollars(t.plan_cents)}`}{t.planned_cents > 0 && ` · one-offs −${dollars(t.planned_cents)}`}
               </span>
             </div>
             {t.overdue_count > 0 && (
@@ -114,7 +116,7 @@ function TimelineCard({ today, onBill, onPlanned }: { today: Today; onBill: (id:
 function TimelineRow({ e, today, floor, onTap }: { e: TimelineEntry; today: Today; floor: number; onTap?: () => void }) {
   const catName = useCategoryName();
   const income = e.amount_cents > 0;
-  const everyday = e.kind === "everyday";
+  const everyday = e.kind === "everyday" || e.kind === "plan";
   const when = everyday
     ? `${e.days} day${e.days === 1 ? "" : "s"} through ${shortDate(e.date)}`
     : e.overdue && e.due_date
@@ -158,7 +160,7 @@ function BillRow({ b, today, onTap }: { b: Bill; today: Today; onTap: () => void
   const accountName = useAccountName();
   const overdue = b.status === "active" && b.next_due < today.today;
   const inLowPoint = b.status === "active" && b.next_due < today.next_payday;
-  const when = b.cadence_months === 1 ? `due ${ordinal(Number(b.next_due.slice(8)))}` : `next ${shortDate(b.next_due)}`;
+  const when = b.per_paycheck ? `each payday · next ${shortDate(b.next_due)}` : b.cadence_months === 1 ? `due ${ordinal(Number(b.next_due.slice(8)))}` : `next ${shortDate(b.next_due)}`;
   return (
     <button type="button" onClick={onTap} className="row w-full text-left">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -172,7 +174,7 @@ function BillRow({ b, today, onTap }: { b: Bill; today: Today; onTap: () => void
       </div>
       <div className="flex shrink-0 flex-col items-end">
         <span className="text-[15px] font-extrabold">{money(b.amount_cents)}</span>
-        {b.cadence_months !== 1 && <span className="text-muted text-[11px] font-semibold">{dollars(b.monthly_equivalent_cents ?? Math.round(b.amount_cents / b.cadence_months))}/mo</span>}
+        {(b.per_paycheck || b.cadence_months !== 1) && <span className="text-muted text-[11px] font-semibold">{dollars(b.monthly_equivalent_cents ?? Math.round(b.amount_cents / Math.max(1, b.cadence_months)))}/mo</span>}
       </div>
     </button>
   );
@@ -188,7 +190,7 @@ function PlannedRow({ p, onTap }: { p: PlannedItem; onTap: () => void }) {
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase ${p.status === "planned" ? "bg-floor" : "bg-line"}`}>{p.status}</span>
         </span>
         <span className="text-muted truncate text-[12px] font-semibold">
-          {shortDate(p.date)} · {catName(p.category_id)}{p.decided_by && ` · ${p.decided_by}`}{p.matched_transaction_id && " · posted"}
+          {shortDate(p.date)} · {catName(p.category_id)}{p.decided_by && ` · ${p.decided_by}`}{p.matched_transaction_id && " · posted"}{p.paid_outside_feed && " · paid outside the feed"}
         </span>
       </div>
       <span className="shrink-0 text-[15px] font-extrabold">{money(p.amount_cents)}</span>
@@ -252,14 +254,14 @@ function SinkingCard() {
 }
 
 const CADENCES = [
-  { v: 1, label: "Monthly" }, { v: 2, label: "Every 2 months" }, { v: 3, label: "Quarterly" }, { v: 6, label: "Twice a year" }, { v: 12, label: "Yearly" },
+  { v: 0, label: "Every paycheck" }, { v: 1, label: "Monthly" }, { v: 2, label: "Every 2 months" }, { v: 3, label: "Quarterly" }, { v: 6, label: "Twice a year" }, { v: 12, label: "Yearly" },
 ];
 
 function BillSheet({ open, onClose, bill, today }: { open: boolean; onClose: () => void; bill: Bill | null; today: Today }) {
   const blank = { name: "", amount: null as number | null, cadence: 1, next_due: todayIso(), category_id: null as string | null, account_id: null as string | null, match_pattern: "", note: "", raise_plan: true };
   const [f, setF] = useState(blank);
   useEffect(() => {
-    setF(bill ? { name: bill.name, amount: bill.amount_cents, cadence: bill.cadence_months, next_due: bill.next_due, category_id: bill.category_id, account_id: bill.account_id, match_pattern: bill.match_pattern ?? "", note: bill.note, raise_plan: false } : blank);
+    setF(bill ? { name: bill.name, amount: bill.amount_cents, cadence: bill.per_paycheck ? 0 : bill.cadence_months, next_due: bill.next_due, category_id: bill.category_id, account_id: bill.account_id, match_pattern: bill.match_pattern ?? "", note: bill.note, raise_plan: false } : blank);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bill, open]);
   const inv = ["bills.", "budget.", "balance.", "sinking."];
@@ -284,8 +286,8 @@ function BillSheet({ open, onClose, bill, today }: { open: boolean; onClose: () 
             </select>
           </Field>
         </div>
-        <Field label="Next due"><input className="field" type="date" value={f.next_due} onChange={(e) => setF({ ...f, next_due: e.target.value })} /></Field>
-        <Field label="Category" hint={f.cadence !== 1 ? "Non-monthly bills post to their category and are tracked by the sinking fund." : undefined}><CategoryPicker value={f.category_id} onChange={(id) => setF({ ...f, category_id: id })} /></Field>
+        <Field label="Next due" hint={f.cadence === 0 ? "Snaps to the first payday on or after this date; then every payday, so three times in a three-paycheck month." : undefined}><input className="field" type="date" value={f.next_due} onChange={(e) => setF({ ...f, next_due: e.target.value })} /></Field>
+        <Field label="Category" hint={f.cadence > 1 ? "Non-monthly bills post to their category and are tracked by the sinking fund." : undefined}><CategoryPicker value={f.category_id} onChange={(id) => setF({ ...f, category_id: id })} /></Field>
         <Field label="Paid from"><AccountPicker value={f.account_id} onChange={(id) => setF({ ...f, account_id: id })} none="Not set" /></Field>
         <Field label="Matches descriptions containing" hint="How Hearth recognizes the charge when it posts."><input className="field" value={f.match_pattern} onChange={(e) => setF({ ...f, match_pattern: e.target.value })} placeholder={f.name.toLowerCase()} /></Field>
         <Field label="Note"><input className="field" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
@@ -328,7 +330,7 @@ function PlannedSheet({ open, onClose, item }: { open: boolean; onClose: () => v
         : tool("planned.create", { item: f.item, amount_cents: f.amount, date: f.date, category_id: f.category_id, decided_by: f.decided_by || null, note: f.note || null }),
     inv,
   );
-  const setStatus = useMutation((status: "planned" | "done" | "dropped") => tool("planned.update", { planned_item_id: item!.id, status }), inv);
+  const setStatus = useMutation((status: "planned" | "done" | "dropped", paid_outside_feed?: boolean) => tool("planned.update", { planned_item_id: item!.id, status, paid_outside_feed }), inv);
   const act = async (fn: () => Promise<unknown>) => { if ((await fn()) !== undefined) onClose(); };
   return (
     <Sheet open={open} onClose={onClose} title={item ? item.item : "Plan a one-off"}>
@@ -345,7 +347,8 @@ function PlannedSheet({ open, onClose, item }: { open: boolean; onClose: () => v
       <ErrorNote error={save.error || setStatus.error} />
       {item && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {item.status !== "done" && <button type="button" className="chip-light" onClick={() => act(() => setStatus.run("done"))}>Mark done</button>}
+          {item.status !== "done" && item.matched_transaction_id && <button type="button" className="chip-light" onClick={() => act(() => setStatus.run("done"))}>Mark done</button>}
+          {item.status !== "done" && !item.matched_transaction_id && <button type="button" className="chip-light" onClick={() => { if (confirm("No charge in the feed matches this yet. Mark it paid outside the feed (cash, another account)? Otherwise it stays planned until the charge posts.")) act(() => setStatus.run("done", true)); }}>Paid outside the feed</button>}
           {item.status !== "dropped" && <button type="button" className="chip-light" onClick={() => act(() => setStatus.run("dropped"))}>Drop</button>}
           {item.status !== "planned" && <button type="button" className="chip-light" onClick={() => act(() => setStatus.run("planned"))}>Back to planned</button>}
         </div>

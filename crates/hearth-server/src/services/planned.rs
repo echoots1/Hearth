@@ -98,10 +98,15 @@ pub struct UpdatePlanned {
     pub amount_cents: Option<Cents>,
     pub category_id: Option<Uuid>,
     pub status: Option<PlannedStatus>,
+    /// Paid where the feed cannot see it; lets `done` stand without a match.
+    pub paid_outside_feed: Option<bool>,
     pub decided_by: Option<String>,
     pub note: Option<String>,
 }
 
+/// Change a planned item. `done` needs a matched transaction or
+/// `paid_outside_feed`: a payment that never posted stays planned (and
+/// overdue) instead of quietly leaving the projection.
 pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdatePlanned) -> Result<PlannedItem> {
     let before = get(ctx, id).await?;
     if let Some(a) = u.amount_cents
@@ -109,10 +114,18 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdatePlanned) -> Res
     {
         return Err(invalid("amount_cents must be ≥ 0"));
     }
+    if u.status == Some(PlannedStatus::Done)
+        && before.matched_transaction_id.is_none()
+        && !u.paid_outside_feed.unwrap_or(before.paid_outside_feed)
+    {
+        return Err(invalid(
+            "no charge in the feed matches this item: link the transaction, or set paid_outside_feed if it was paid in cash or from elsewhere",
+        ));
+    }
     let after = sqlx::query_as::<_, PlannedItem>(
         "update planned_items set date = coalesce($3, date), item = coalesce($4, item), amount_cents = coalesce($5, amount_cents),
            category_id = coalesce($6, category_id), status = coalesce($7, status), decided_by = coalesce($8, decided_by),
-           note = coalesce($9, note), updated_at = now()
+           note = coalesce($9, note), paid_outside_feed = coalesce($10, paid_outside_feed), updated_at = now()
          where household_id = $1 and id = $2 returning *",
     )
     .bind(ctx.household_id)
@@ -124,6 +137,7 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdatePlanned) -> Res
     .bind(u.status)
     .bind(&u.decided_by)
     .bind(&u.note)
+    .bind(u.paid_outside_feed)
     .fetch_one(&ctx.pool)
     .await?;
     super::audit::record(

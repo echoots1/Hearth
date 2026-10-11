@@ -166,10 +166,11 @@ function CashCard({ today, balance }: { today: Today; balance: BalanceOverview |
                 {headroom >= 0 ? `${dollars(headroom)} above floor` : `${dollars(-headroom)} below floor`}
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Stat dark label="Bills due" value={`−${dollars(lp.bills_due_cents)}`} />
               <Stat dark label="Everyday pace" value={`−${dollars(lp.everyday_expected_cents)}`} />
-              <Stat dark label="Planned" value={`−${dollars(lp.planned_items_cents)}`} />
+              <Stat dark label="Other plans" value={`−${dollars(lp.plan_remaining_cents)}`} />
+              <Stat dark label="One-offs" value={`−${dollars(lp.planned_items_cents)}`} />
             </div>
             <div className="text-faint flex items-center justify-between text-[12px] font-semibold">
               <span>{lp.bills.some((b) => b.overdue) ? `${lp.bills.filter((b) => b.overdue).length} past due, not posted yet · still counted` : " "}</span>

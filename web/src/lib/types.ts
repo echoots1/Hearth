@@ -174,6 +174,8 @@ export type Bill = {
   name: string;
   amount_cents: number;
   cadence_months: number;
+  /** Due on every payday of the household pay schedule; cadence_months is then ignored. */
+  per_paycheck: boolean;
   next_due: string;
   category_id: string | null;
   category_name?: string | null;
@@ -196,6 +198,8 @@ export type PlannedItem = {
   decided_by: string;
   note: string;
   matched_transaction_id: string | null;
+  /** Done without a charge in the feed (cash, another account). */
+  paid_outside_feed: boolean;
 };
 
 export type LowPoint = {
@@ -209,6 +213,9 @@ export type LowPoint = {
   everyday_expected_cents: number;
   planned: { planned_item_id: string; item: string; date: string; amount_cents: number }[];
   planned_items_cents: number;
+  /** Other spend categories' remaining plan (plan − bills − spent) that falls before payday. */
+  plan_remaining: { category_id: string; name: string; remaining_cents: number; amount_cents: number }[];
+  plan_remaining_cents: number;
   low_point_cents: number;
 };
 
@@ -239,7 +246,7 @@ export type BalanceOverview = {
 
 export type TimelineEntry = {
   date: string;
-  kind: "paycheck" | "bill" | "planned" | "everyday";
+  kind: "paycheck" | "bill" | "planned" | "everyday" | "plan";
   label: string;
   /** Signed: income positive, money out negative. */
   amount_cents: number;
@@ -267,6 +274,8 @@ export type TimelineView = {
     bills_cents: number;
     planned_cents: number;
     everyday_cents: number;
+    /** The remaining plan of non-everyday spend categories in the window. */
+    plan_cents: number;
     paydays: string[];
     overdue_count: number;
     unscheduled_income_monthly_cents: number;

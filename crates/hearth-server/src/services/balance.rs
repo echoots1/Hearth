@@ -92,6 +92,7 @@ pub async fn low_point(ctx: &Ctx, estimate: Cents) -> Result<LowPoint> {
             plan_cents: c.plan_cents,
             spent_cents: c.activity_cents,
             is_everyday: c.is_everyday,
+            bills_total_cents: c.bills_total_cents,
         })
         .collect();
     let planned: Vec<PlannedForLowPoint> = super::planned::outstanding(ctx)
@@ -192,6 +193,7 @@ pub async fn timeline(ctx: &Ctx, days: Option<i64>) -> Result<TimelineView> {
         name: b.name,
         next_due: b.next_due,
         cadence_months: b.cadence_months.max(1) as u32,
+        per_paycheck: b.per_paycheck,
         amount_cents: b.amount_cents,
         category_id: b.category_id,
     })

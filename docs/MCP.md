@@ -107,10 +107,10 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `assistant.actions` | What the assistant changed in Driver mode, newest first, with undo availability. |
 | `assistant.work` | Everything waiting for the assistant in one call: transactions to categorize (with suggestions), answered questions since the last pass, pending proposals, open alerts, overdue bills, categories whose bills exceed their plan, stale balances, and the autonomy settings. |
 | `audit.list` | The audit log (every write with actor, before and after). |
-| `balance.overview` | Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, including any past due that have not posted; everyday pace; planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance. |
-| `balance.timeline` | Expected cash day by day from the current estimate: every coming paycheck (income categories planned per paycheck, on each payday), each bill occurrence, planned one-offs and the everyday drain, in date order with the running balance after each; plus the low point in the window and headroom over the cash floor. A bill or one-off past its date with no matching charge is still expected: it lands today, flagged `overdue`, and stays until the charge posts. |
+| `balance.overview` | Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, including any past due that have not posted; everyday pace; planned items; other categories' remaining plan spread over the month) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance. |
+| `balance.timeline` | Expected cash day by day from the current estimate: every coming paycheck (income categories planned per paycheck, on each payday), each bill occurrence (a per-paycheck bill on every payday), planned one-offs, the everyday drain, and each other spend category's remaining plan (`plan − bills − spent`, spread over the rest of the month; later months their plan above their bills) as `plan` rows, in date order with the running balance after each; plus the low point in the window and headroom over the cash floor. A bill or one-off past its date with no matching charge is still expected: it lands today, flagged `overdue`, and stays until the charge posts. |
 | `bills.get` | One recurring bill with its splits. |
-| `bills.list` | Recurring bills (active by default) with monthly equivalents and category names. `upcoming` limits to bills due before the next payday. |
+| `bills.list` | Recurring bills (active by default) with monthly equivalents (this month's, so a per-paycheck bill counts this month's paydays) and category names. `upcoming` limits to bills due before the next payday. |
 | `budget.category` | One category in detail: its view for the month, its plan phases, the bills in it, and this month's transactions. |
 | `budget.groups` | Category groups and every category (including archived when asked). |
 | `budget.month` | The budget for a month: groups → categories with plan, spent (activity), left, pace, bill totals and the next plan phase; plus household totals and uncategorized activity. A category with `plan_per_paycheck` plans per paycheck: its `plan_cents` is `per_paycheck_cents × paychecks_in_month`, so a three-paycheck month plans more. |
@@ -143,13 +143,13 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `alerts.snooze` | always applies | Pause nagging on an alert until a time. |
 | `assistant.summary_write` | always applies | Leave a short report of a pass; shows in Activity and marks the pass time. |
 | `balance.set_reported` | categorizing_notes | Record the balance a person just read off their bank, with when they read it. |
-| `bills.add` | plans_bills | Add a recurring bill from a sentence: name, amount, cadence, next due; optional category (by id or name), account, match pattern. Returns the bill, the category's bill total and plan, and whether the plan now falls short. |
+| `bills.add` | plans_bills | Add a recurring bill from a sentence: name, amount, cadence (months, or every paycheck), next due; optional category (by id or name), account, match pattern. Returns the bill, the category's bill total and plan, and whether the plan now falls short. |
 | `bills.cancel` | plans_bills | Mark a bill canceled; any later charge matching it raises a critical alert. |
 | `bills.delete` | plans_bills | Delete a bill outright (prefer cancel, which keeps history). |
 | `bills.pause` | plans_bills | Pause a bill (no due-date alerts, not counted in totals) without canceling it. |
 | `bills.resume` | plans_bills | Reactivate a paused or canceled bill. |
 | `bills.split` | plans_bills | Split a bill across categories. Only when a person asks for it; the assistant must not split on its own initiative. |
-| `bills.update` | plans_bills | Change a bill's amount, due date, cadence, category, pattern, note or status. |
+| `bills.update` | plans_bills | Change a bill's amount, due date, cadence (months, or every paycheck), category, pattern, note or status. |
 | `budget.create_category` | plans_bills | Create a category (and its group if needed), optionally with a plan. |
 | `budget.delete_plan` | plans_bills | Remove a plan phase. |
 | `budget.set_category_note` | categorizing_notes | Set a category's standing note (read by the assistant; jobs honor [no-alerts], [no-large-charge], [no-pace]). |
@@ -164,7 +164,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
 | `household.update_settings` | plans_bills | Change a household setting (pay schedule, cash floor, thresholds, quiet hours, nag). The `assistant` setting is UI-only. |
 | `jobs.run` | always applies | Run a job now (under its lock); returns the finished run with its summary. |
 | `planned.create` | plans_bills | Approve a one-off expense ahead of time so it isn't flagged when it posts. |
-| `planned.update` | plans_bills | Change a planned item or its status (planned, done, dropped). |
+| `planned.update` | plans_bills | Change a planned item or its status (planned, done, dropped). `done` needs the matching charge linked (the process job does it, or `transactions.link_planned`) or `paid_outside_feed: true`; otherwise it stays planned and overdue. |
 | `questions.answer` | always applies | Answer an open question (people, or the assistant relaying an answer given in chat). |
 | `questions.ask` | always applies | Ask the humans something (shows in the inbox and is pushed); optional one-tap options. |
 | `questions.dismiss` | always applies | Dismiss a question without answering. |
@@ -690,7 +690,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
       "type": "integer"
     },
     "cadence_months": {
-      "description": "1 monthly (default), 3 quarterly, 6, 12 yearly.",
+      "description": "1 monthly (default), 3 quarterly, 6, 12 yearly; 0 = every paycheck.",
       "format": "int16",
       "maximum": 32767,
       "minimum": -32768,
@@ -729,6 +729,13 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
     "note": {
       "type": [
         "string",
+        "null"
+      ]
+    },
+    "per_paycheck": {
+      "description": "Due on every payday of the household pay schedule (three times in a\nthree-paycheck month); `next_due` snaps to the first payday on or after it.",
+      "type": [
+        "boolean",
         "null"
       ]
     },
@@ -988,6 +995,7 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
       "type": "string"
     },
     "cadence_months": {
+      "description": "0 = every paycheck; ≥ 1 months turns per paycheck off.",
       "format": "int16",
       "maximum": 32767,
       "minimum": -32768,
@@ -1025,6 +1033,12 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
     "note": {
       "type": [
         "string",
+        "null"
+      ]
+    },
+    "per_paycheck": {
+      "type": [
+        "boolean",
         "null"
       ]
     },
@@ -2177,6 +2191,13 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
         "null"
       ]
     },
+    "paid_outside_feed": {
+      "description": "It was paid where the feed cannot see it (cash, another account).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "planned_item_id": {
       "format": "uuid",
       "type": "string"
@@ -2189,7 +2210,8 @@ _Generated from the registry by `hearth tools`; do not edit by hand._
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "`done` needs a matched transaction or `paid_outside_feed`."
     }
   },
   "required": [

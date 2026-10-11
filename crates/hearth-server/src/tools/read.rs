@@ -245,7 +245,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "balance.overview",
-            "Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, including any past due that have not posted; everyday pace; planned items) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance.",
+            "Cash now: per-account running estimates with ages, the household estimate, and the projected low point before the next payday with its components (bills due, including any past due that have not posted; everyday pace; planned items; other categories' remaining plan spread over the month) and headroom over the cash floor. Each account runs forward from its newest balance (`anchor`: the bank-synced one or a person's reported one), so synced accounts count without anyone typing a balance.",
             Empty,
             writes = false,
             area = None,
@@ -253,7 +253,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "balance.timeline",
-            "Expected cash day by day from the current estimate: every coming paycheck (income categories planned per paycheck, on each payday), each bill occurrence, planned one-offs and the everyday drain, in date order with the running balance after each; plus the low point in the window and headroom over the cash floor. A bill or one-off past its date with no matching charge is still expected: it lands today, flagged `overdue`, and stays until the charge posts.",
+            "Expected cash day by day from the current estimate: every coming paycheck (income categories planned per paycheck, on each payday), each bill occurrence (a per-paycheck bill on every payday), planned one-offs, the everyday drain, and each other spend category's remaining plan (`plan − bills − spent`, spread over the rest of the month; later months their plan above their bills) as `plan` rows, in date order with the running balance after each; plus the low point in the window and headroom over the cash floor. A bill or one-off past its date with no matching charge is still expected: it lands today, flagged `overdue`, and stays until the charge posts.",
             TimelineArgs,
             writes = false,
             area = None,
@@ -313,7 +313,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "bills.list",
-            "Recurring bills (active by default) with monthly equivalents and category names. `upcoming` limits to bills due before the next payday.",
+            "Recurring bills (active by default) with monthly equivalents (this month's, so a per-paycheck bill counts this month's paydays) and category names. `upcoming` limits to bills due before the next payday.",
             BillsListArgs,
             writes = false,
             area = None,
@@ -340,7 +340,8 @@ pub fn tools() -> Vec<ToolDef> {
             |tc, a| {
                 let b = services::bills::get(&tc.ctx, a.id).await?;
                 let splits = services::bills::splits(&tc.ctx, a.id).await?;
-                serde_json::json!({ "bill": b, "splits": splits, "monthly_equivalent_cents": services::bills::to_core(&b).monthly_equivalent() })
+                let n = services::bills::paychecks_this_month(&tc.ctx).await?;
+                serde_json::json!({ "bill": b, "splits": splits, "monthly_equivalent_cents": services::bills::to_core(&b).monthly_equivalent(n) })
             }
         ),
         tool!(

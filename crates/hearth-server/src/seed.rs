@@ -1140,6 +1140,7 @@ async fn bill(
             name: name.into(),
             amount_cents: Cents::new(amount_cents),
             cadence_months: Some(cadence),
+            per_paycheck: None,
             next_due,
             category_id: Some(category_id),
             account_id: Some(account_id),

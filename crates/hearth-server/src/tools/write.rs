@@ -202,8 +202,11 @@ pub struct DeletePlanArgs {
 pub struct BillAddArgs {
     pub name: String,
     pub amount_cents: Cents,
-    /// 1 monthly (default), 3 quarterly, 6, 12 yearly.
+    /// 1 monthly (default), 3 quarterly, 6, 12 yearly; 0 = every paycheck.
     pub cadence_months: Option<i16>,
+    /// Due on every payday of the household pay schedule (three times in a
+    /// three-paycheck month); `next_due` snaps to the first payday on or after it.
+    pub per_paycheck: Option<bool>,
     pub next_due: NaiveDate,
     pub category_id: Option<Uuid>,
     pub category_name: Option<String>,
@@ -220,7 +223,9 @@ pub struct BillUpdateArgs {
     pub bill_id: Uuid,
     pub name: Option<String>,
     pub amount_cents: Option<Cents>,
+    /// 0 = every paycheck; ≥ 1 months turns per paycheck off.
     pub cadence_months: Option<i16>,
+    pub per_paycheck: Option<bool>,
     pub next_due: Option<NaiveDate>,
     pub category_id: Option<Uuid>,
     pub account_id: Option<Uuid>,
@@ -265,7 +270,10 @@ pub struct PlannedUpdateArgs {
     pub item: Option<String>,
     pub amount_cents: Option<Cents>,
     pub category_id: Option<Uuid>,
+    /// `done` needs a matched transaction or `paid_outside_feed`.
     pub status: Option<PlannedStatus>,
+    /// It was paid where the feed cannot see it (cash, another account).
+    pub paid_outside_feed: Option<bool>,
     pub note: Option<String>,
 }
 
@@ -971,25 +979,33 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "bills.add",
-            "Add a recurring bill from a sentence: name, amount, cadence, next due; optional category (by id or name), account, match pattern. Returns the bill, the category's bill total and plan, and whether the plan now falls short.",
+            "Add a recurring bill from a sentence: name, amount, cadence (months, or every paycheck), next due; optional category (by id or name), account, match pattern. Returns the bill, the category's bill total and plan, and whether the plan now falls short.",
             BillAddArgs,
             writes = true,
             area = Some(Area::PlansBills),
             |tc, a| {
                 let cat = resolve_category(&tc.ctx, a.category_id, &a.category_name).await?;
                 let cadence = a.cadence_months.unwrap_or(1);
-                let summary = format!(
-                    "Add bill “{}” {} every {} month{} from {}",
-                    a.name,
-                    a.amount_cents,
-                    cadence,
-                    if cadence == 1 { "" } else { "s" },
-                    a.next_due
-                );
+                let per_paycheck = a.per_paycheck == Some(true) || cadence == 0;
+                let summary = if per_paycheck {
+                    format!(
+                        "Add bill “{}” {} every paycheck from {}",
+                        a.name, a.amount_cents, a.next_due
+                    )
+                } else {
+                    format!(
+                        "Add bill “{}” {} every {} month{} from {}",
+                        a.name,
+                        a.amount_cents,
+                        cadence,
+                        if cadence == 1 { "" } else { "s" },
+                        a.next_due
+                    )
+                };
                 let args = args_of(&a);
                 gated(&tc, Area::PlansBills, "bills.add", &args, summary, (None, None), || async {
                 let b = services::bills::add(&tc.ctx, &tc.actor, services::bills::AddBill {
-                    name: a.name.clone(), amount_cents: a.amount_cents, cadence_months: a.cadence_months, next_due: a.next_due,
+                    name: a.name.clone(), amount_cents: a.amount_cents, cadence_months: a.cadence_months, per_paycheck: a.per_paycheck, next_due: a.next_due,
                     category_id: cat, account_id: a.account_id, match_pattern: a.match_pattern.clone(), note: a.note.clone(),
                 }).await?;
                 // Plan check for the category.
@@ -1011,7 +1027,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "bills.update",
-            "Change a bill's amount, due date, cadence, category, pattern, note or status.",
+            "Change a bill's amount, due date, cadence (months, or every paycheck), category, pattern, note or status.",
             BillUpdateArgs,
             writes = true,
             area = Some(Area::PlansBills),
@@ -1020,10 +1036,10 @@ pub fn tools() -> Vec<ToolDef> {
                 let args = args_of(&a);
                 gated(&tc, Area::PlansBills, "bills.update", &args, format!("Update bill “{}”", before.name), (None, Some(a.bill_id)), || async {
                 let after = services::bills::update(&tc.ctx, &tc.actor, a.bill_id, services::bills::UpdateBill {
-                    name: a.name.clone(), amount_cents: a.amount_cents, cadence_months: a.cadence_months, next_due: a.next_due, category_id: a.category_id,
+                    name: a.name.clone(), amount_cents: a.amount_cents, cadence_months: a.cadence_months, per_paycheck: a.per_paycheck, next_due: a.next_due, category_id: a.category_id,
                     account_id: a.account_id, match_pattern: a.match_pattern.clone(), note: a.note.clone(), status: a.status,
                 }).await?;
-                let u = undo("bills.update", json!({ "bill_id": before.id, "name": before.name, "amount_cents": before.amount_cents, "cadence_months": before.cadence_months, "next_due": before.next_due, "category_id": before.category_id, "account_id": before.account_id, "match_pattern": before.match_pattern, "note": before.note, "status": before.status }), format!("Restore “{}”", before.name));
+                let u = undo("bills.update", json!({ "bill_id": before.id, "name": before.name, "amount_cents": before.amount_cents, "cadence_months": before.cadence_months, "per_paycheck": before.per_paycheck, "next_due": before.next_due, "category_id": before.category_id, "account_id": before.account_id, "match_pattern": before.match_pattern, "note": before.note, "status": before.status }), format!("Restore “{}”", before.name));
                 Ok((after.clone(), j(&before), j(&after), u))
             }).await?
             }
@@ -1221,7 +1237,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "planned.update",
-            "Change a planned item or its status (planned, done, dropped).",
+            "Change a planned item or its status (planned, done, dropped). `done` needs the matching charge linked (the process job does it, or `transactions.link_planned`) or `paid_outside_feed: true`; otherwise it stays planned and overdue.",
             PlannedUpdateArgs,
             writes = true,
             area = Some(Area::PlansBills),
@@ -1230,9 +1246,9 @@ pub fn tools() -> Vec<ToolDef> {
                 let args = args_of(&a);
                 gated(&tc, Area::PlansBills, "planned.update", &args, format!("Update planned “{}”", before.item), (None, None), || async {
                 let after = services::planned::update(&tc.ctx, &tc.actor, a.planned_item_id, services::planned::UpdatePlanned {
-                    date: a.date, item: a.item.clone(), amount_cents: a.amount_cents, category_id: a.category_id, status: a.status, decided_by: None, note: a.note.clone(),
+                    date: a.date, item: a.item.clone(), amount_cents: a.amount_cents, category_id: a.category_id, status: a.status, paid_outside_feed: a.paid_outside_feed, decided_by: None, note: a.note.clone(),
                 }).await?;
-                let u = undo("planned.update", json!({ "planned_item_id": before.id, "date": before.date, "item": before.item, "amount_cents": before.amount_cents, "category_id": before.category_id, "status": before.status, "note": before.note }), format!("Restore “{}”", before.item));
+                let u = undo("planned.update", json!({ "planned_item_id": before.id, "date": before.date, "item": before.item, "amount_cents": before.amount_cents, "category_id": before.category_id, "status": before.status, "paid_outside_feed": before.paid_outside_feed, "note": before.note }), format!("Restore “{}”", before.item));
                 Ok((after.clone(), j(&before), j(&after), u))
             }).await?
             }
