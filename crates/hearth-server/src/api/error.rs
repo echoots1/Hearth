@@ -36,7 +36,8 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        if self.status.is_server_error() {
+        // Only a true 500 hides its message; a 502 from an upstream (Claude, Plaid) is the caller's to read.
+        if self.status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self.message, "request failed");
             return (self.status, Json(json!({ "error": "internal error" }))).into_response();
         }

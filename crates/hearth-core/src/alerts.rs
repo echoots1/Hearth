@@ -34,6 +34,8 @@ pub enum AlertType {
     SyncFailed,
     ReviewQueueBacklog,
     Milestone,
+    /// API mode stopped calling Claude because the monthly cap was reached.
+    ApiSpendCap,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

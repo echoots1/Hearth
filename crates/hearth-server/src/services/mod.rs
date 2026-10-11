@@ -10,6 +10,7 @@ pub mod audit;
 pub mod balance;
 pub mod bills;
 pub mod budget;
+pub mod chat;
 pub mod csv_import;
 pub mod debts;
 pub mod goals;

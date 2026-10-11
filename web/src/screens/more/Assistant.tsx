@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import { Card, CardHead, ErrorNote, Field, MoneyInput, PageHeader, Segmented, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import { useMutation, useQuery } from "../../lib/query";
@@ -72,6 +73,7 @@ function ApiModeCard({ s, set, status }: { s: AssistantSettings; set: (p: Partia
   const saveKey = useMutation(() => api.post("/api/settings/anthropic-key", { api_key: key }), ["settings."]);
   const clearKey = useMutation(() => api.del("/api/settings/anthropic-key"), ["settings."]);
   const [cap, setCap] = useState<number | null>(s.monthly_cap_cents);
+  const pass = useMutation(() => api.post("/api/assistant/pass", {}), ["settings.", "jobs.", "alerts.", "assistant."]);
   const models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
   return (
     <Card className="divider overflow-hidden">
@@ -100,6 +102,12 @@ function ApiModeCard({ s, set, status }: { s: AssistantSettings; set: (p: Partia
           <Field label="Daily pass at"><input className="field" type="time" value={s.pass_time} onChange={(e) => set({ pass_time: e.target.value })} /></Field>
         </div>
         {cap !== s.monthly_cap_cents && cap != null && <button type="button" className="btn-dark" onClick={() => set({ monthly_cap_cents: cap })}>Save cap</button>}
+        <div className="flex gap-2">
+          <Link to="/chat" className="btn-light flex-1">Open chat</Link>
+          <button type="button" className="btn-light flex-1" disabled={pass.busy || !status.has_api_key} onClick={() => pass.run()}>{pass.busy ? "Working…" : "Run a pass now"}</button>
+        </div>
+        <ErrorNote error={pass.error} />
+        <p className="text-faint text-[11px] font-semibold">The pass runs daily at the time above when a key is saved. Your budget data is sent to Anthropic's API on every call.</p>
         <ErrorNote error={saveKey.error || clearKey.error} />
       </div>
     </Card>

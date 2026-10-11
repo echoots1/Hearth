@@ -64,6 +64,7 @@ pg_enum!(AlertType, "alert_type", {
     DebtRedraw => "debt_redraw", CardDeclined => "card_declined", PlannedItemMissing => "planned_item_missing",
     BalanceStale => "balance_stale", SyncFailed => "sync_failed", ReviewQueueBacklog => "review_queue_backlog",
     Milestone => "milestone",
+    ApiSpendCap => "api_spend_cap",
 });
 pg_enum!(AlertSeverity, "alert_severity", { Info => "info", Warn => "warn", Critical => "critical" });
 pg_enum!(AlertStatus, "alert_status", { Open => "open", Notified => "notified", Ack => "ack", Done => "done" });
@@ -109,6 +110,7 @@ impl From<hearth_core::alerts::AlertType> for AlertType {
             C::SyncFailed => AlertType::SyncFailed,
             C::ReviewQueueBacklog => AlertType::ReviewQueueBacklog,
             C::Milestone => AlertType::Milestone,
+            C::ApiSpendCap => AlertType::ApiSpendCap,
         }
     }
 }
@@ -651,4 +653,25 @@ pub struct AuditEntry {
     pub before: Option<serde_json::Value>,
     pub after: Option<serde_json::Value>,
     pub at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+pub struct ChatThread {
+    pub id: Uuid,
+    pub household_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+pub struct ChatMessage {
+    pub id: Uuid,
+    pub thread_id: Uuid,
+    pub role: String,
+    pub content: serde_json::Value,
+    pub text: String,
+    pub cost_cents: Cents,
+    pub created_at: DateTime<Utc>,
 }

@@ -26,9 +26,16 @@ export function Budget() {
     <>
       <div className="flex h-11 items-center justify-between">
         <Wordmark />
-        <Link to="/more/settings" className="icon-btn" aria-label="Settings">
-          <Icon name="settings" />
-        </Link>
+        <div className="flex gap-2">
+          {t.assistant.mode === "api" && (
+            <Link to="/chat" className="icon-btn" aria-label="Chat with Claude">
+              <Icon name="sparkle" size={18} />
+            </Link>
+          )}
+          <Link to="/more/settings" className="icon-btn" aria-label="Settings">
+            <Icon name="settings" />
+          </Link>
+        </div>
       </div>
 
       <div className="flex h-11 items-center justify-between">

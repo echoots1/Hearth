@@ -1,5 +1,6 @@
 //! External systems: Web Push, ntfy, SMTP; later Plaid, Privacy.com, Claude.
 
+pub mod claude;
 pub mod ntfy;
 pub mod plaid;
 pub mod privacy;
@@ -18,6 +19,7 @@ pub fn jobs(state: &AppState) -> Vec<Job> {
             description: "pull transactions and balances for every linked bank, then process",
             every: std::time::Duration::from_secs(state.config.jobs.plaid_sync_minutes.max(5) * 60),
             handler: |s| Box::pin(sync_plaid(s)),
+            gate: None,
         });
     }
     if state.config.privacy.is_some() {
@@ -28,6 +30,7 @@ pub fn jobs(state: &AppState) -> Vec<Job> {
                 state.config.jobs.privacy_sync_minutes.max(2) * 60,
             ),
             handler: |s| Box::pin(sync_privacy(s)),
+            gate: None,
         });
     }
     v

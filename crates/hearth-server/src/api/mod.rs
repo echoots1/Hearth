@@ -5,6 +5,7 @@
 //! health, and the notification action endpoint.
 
 mod auth;
+mod chat;
 mod error;
 mod health;
 mod integrations;
@@ -89,6 +90,13 @@ pub fn router(state: AppState) -> Router {
         .route("/proposals/{id}/decline", post(tools::decline_proposal))
         .route("/actions/{id}/undo", post(tools::undo_action))
         .route("/n/{token}", get(links::act))
+        .route(
+            "/chat/threads",
+            get(chat::threads).post(chat::create_thread),
+        )
+        .route("/chat/threads/{id}", get(chat::messages))
+        .route("/chat/threads/{id}/messages", post(chat::send))
+        .route("/assistant/pass", post(chat::pass_now))
         .route("/integrations/status", get(integrations::status))
         .route("/plaid/link-token", post(integrations::plaid_link_token))
         .route("/plaid/exchange", post(integrations::plaid_exchange))
