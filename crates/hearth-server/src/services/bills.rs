@@ -353,6 +353,16 @@ pub async fn paychecks_this_month(ctx: &Ctx) -> Result<u32> {
     Ok(settings.pay_schedule.paydays_in_month(ctx.month()).len() as u32)
 }
 
+/// The splits of every active bill, in one query.
+pub async fn active_splits(ctx: &Ctx) -> Result<Vec<BillSplit>> {
+    Ok(sqlx::query_as::<_, BillSplit>(
+        "select s.* from bill_splits s join recurring_bills b on b.id = s.bill_id where b.household_id = $1 and b.status = 'active'",
+    )
+    .bind(ctx.household_id)
+    .fetch_all(&ctx.pool)
+    .await?)
+}
+
 /// Monthly-equivalent total of active bills per category for the current
 /// month (splits honored).
 pub async fn monthly_totals_by_category(ctx: &Ctx) -> Result<HashMap<Uuid, Cents>> {
@@ -361,13 +371,7 @@ pub async fn monthly_totals_by_category(ctx: &Ctx) -> Result<HashMap<Uuid, Cents
     let core_bills: Vec<CoreBill> = bills.iter().map(to_core).collect();
     let mut totals = core::monthly_total_by_category(&core_bills, n);
     // Splits: move the bill's amount from its category to the split categories.
-    let split_rows = sqlx::query_as::<_, BillSplit>(
-        "select s.* from bill_splits s join recurring_bills b on b.id = s.bill_id where b.household_id = $1 and b.status = 'active'",
-    )
-    .bind(ctx.household_id)
-    .fetch_all(&ctx.pool)
-    .await?;
-    for s in split_rows {
+    for s in active_splits(ctx).await? {
         if let Some(b) = bills.iter().find(|b| b.id == s.bill_id) {
             let share = if b.per_paycheck {
                 Cents(s.amount_cents.0 * n as i64)

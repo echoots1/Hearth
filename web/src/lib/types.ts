@@ -213,7 +213,7 @@ export type LowPoint = {
   everyday_expected_cents: number;
   planned: { planned_item_id: string; item: string; date: string; amount_cents: number }[];
   planned_items_cents: number;
-  /** Other spend categories' remaining plan (plan − bills − spent) that falls before payday. */
+  /** Other spend categories' remaining plan (plan − spent − bills still due this month) that falls before payday. */
   plan_remaining: { category_id: string; name: string; remaining_cents: number; amount_cents: number }[];
   plan_remaining_cents: number;
   low_point_cents: number;
