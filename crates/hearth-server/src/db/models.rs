@@ -330,6 +330,8 @@ pub struct RecurringBill {
     pub name: String,
     pub amount_cents: Cents,
     pub cadence_months: i16,
+    /// Due on every payday of the household pay schedule; `cadence_months` is ignored.
+    pub per_paycheck: bool,
     pub next_due: NaiveDate,
     pub category_id: Option<Uuid>,
     pub account_id: Option<Uuid>,
@@ -398,6 +400,8 @@ pub struct PlannedItem {
     pub decided_by: String,
     pub note: String,
     pub matched_transaction_id: Option<Uuid>,
+    /// Done without a charge in the feed (paid in cash or from elsewhere).
+    pub paid_outside_feed: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

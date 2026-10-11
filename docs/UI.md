@@ -38,10 +38,12 @@ integrations, jobs).
      reported balance and the bank's own number with its age. "Update"
      button records a fresh reported balance.
    - *Low point before <next payday>*: projected low point, days until
-     payday, a pill with distance above/below the cash floor, and three
+     payday, a pill with distance above/below the cash floor, and four
      tiles explaining the deductions: bills due (a bill past due with no
-     matching charge is still counted), everyday pace, planned; a link to
-     the timeline on the Plan tab.
+     matching charge is still counted), everyday pace, other plans (every
+     other spend category's plan above its bills and what is spent, spread
+     over the rest of the month), one-offs; a link to the timeline on the
+     Plan tab.
 4. **Attention row** of pills: N alerts (orange when any critical), N
    questions from the AI, N to review. Each opens the Activity inbox
    filtered.
@@ -102,19 +104,27 @@ A timeline of what's coming, soonest first, with the same card language:
   pill for the distance from the cash floor at the low. Below, every row in
   date order with the running balance after it: each paycheck (income
   categories planned per paycheck, on the household's paydays or the
-  category's own), each bill occurrence,
+  category's own), each bill occurrence (a per-paycheck bill on every
+  payday), the rest of each other spend category's plan as a muted
+  "<category> (remaining plan)" row per stretch,
   planned one-offs, and the everyday drain as one row per stretch between
   them. A bill or one-off past its date with no matching charge is still
   expected: it lands today, marked past due, and stays until the charge
   posts. Tap a bill or one-off → edit. The stretch to the first paycheck is
   the low point on the home screen.
-- **Recurring bills**: every active bill grouped by cadence (monthly ·
-  every N months · yearly), with amount, next due, category, the card or
-  account it hits, and a canceled/paused tag. Tap → edit; "+ Add a bill"
-  opens a short form. The same form is what the AI fills from a sentence.
+- **Recurring bills**: every active bill grouped by cadence (every paycheck
+  · monthly · every N months · yearly), with amount, next due, category,
+  the card or account it hits, and a canceled/paused tag. A per-paycheck
+  bill shows "each payday" and this month's cost (amount × paydays). Tap →
+  edit; "+ Add a bill" opens a short form whose "How often" includes
+  "Every paycheck" (the due date snaps to a payday). The same form is what
+  the AI fills from a sentence.
 - **Sinking fund**: funded balance vs should-have for the non-monthly bills,
   the monthly set-aside, and an "update balance" button.
 - **One-offs**: planned items with status chips (planned · done · dropped).
+  "Mark done" appears once a charge is matched; before that the only way
+  to close one is "Paid outside the feed" (cash, another account), which
+  records that flag. Otherwise it stays planned and overdue.
 
 ### Goals
 

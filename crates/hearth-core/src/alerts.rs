@@ -699,6 +699,7 @@ mod tests {
             name: name.into(),
             amount_cents: Cents::dollars(dollars),
             cadence_months: 1,
+            per_paycheck: false,
             next_due: d(due),
             category_id: None,
             account_id: None,
@@ -817,10 +818,12 @@ mod tests {
             bills_due_cents: Cents::dollars(400),
             everyday_expected_cents: Cents::dollars(300),
             planned_items_cents: Cents::ZERO,
+            plan_remaining_cents: Cents::ZERO,
             low_point_cents: Cents::dollars(300),
             bills: vec![],
             everyday: vec![],
             planned: vec![],
+            plan_remaining: vec![],
         });
         s.debts = vec![
             DebtSnapshot {

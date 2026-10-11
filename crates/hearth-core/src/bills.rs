@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::calendar::Month;
 use crate::money::Cents;
 use crate::rules::normalize;
-use crate::settings::BillMatch;
+use crate::settings::{BillMatch, PaySchedule};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,7 +24,11 @@ pub struct Bill {
     pub name: String,
     pub amount_cents: Cents,
     /// Months between occurrences: 1 monthly, 3 quarterly, 12 yearly.
+    /// Ignored when `per_paycheck`.
     pub cadence_months: u32,
+    /// Due on every payday of the household pay schedule (so three times in
+    /// a three-paycheck month).
+    pub per_paycheck: bool,
     pub next_due: NaiveDate,
     pub category_id: Option<Uuid>,
     pub account_id: Option<Uuid>,
@@ -34,14 +38,46 @@ pub struct Bill {
 }
 
 impl Bill {
-    /// What this bill costs per month on average.
-    pub fn monthly_equivalent(&self) -> Cents {
-        self.amount_cents
-            .div_ceil(self.cadence_months.max(1) as i64)
+    /// What this bill costs in a month: a per-paycheck bill its amount times
+    /// the paydays in that month; otherwise the amount spread over its
+    /// cadence (rounded up).
+    pub fn monthly_equivalent(&self, paychecks_in_month: u32) -> Cents {
+        if self.per_paycheck {
+            Cents(self.amount_cents.0 * paychecks_in_month as i64)
+        } else {
+            self.amount_cents
+                .div_ceil(self.cadence_months.max(1) as i64)
+        }
     }
 
+    /// Posts at least monthly (so it is not a sinking-fund item).
     pub fn is_monthly(&self) -> bool {
-        self.cadence_months <= 1
+        self.per_paycheck || self.cadence_months <= 1
+    }
+
+    /// The due date after `due`: the next payday for a per-paycheck bill,
+    /// else one cadence on.
+    pub fn next_occurrence(&self, due: NaiveDate, schedule: &PaySchedule) -> NaiveDate {
+        if self.per_paycheck {
+            schedule.next_payday(due)
+        } else {
+            advance(due, self.cadence_months)
+        }
+    }
+
+    /// Advance `due` until it is on or after `from`. Returns the number of steps.
+    pub fn catch_up(
+        &self,
+        mut due: NaiveDate,
+        schedule: &PaySchedule,
+        from: NaiveDate,
+    ) -> (NaiveDate, u32) {
+        let mut steps = 0;
+        while due < from && steps < 1200 {
+            due = self.next_occurrence(due, schedule);
+            steps += 1;
+        }
+        (due, steps)
     }
 
     fn pattern(&self) -> String {
@@ -69,12 +105,16 @@ pub fn catch_up(mut due: NaiveDate, cadence_months: u32, from: NaiveDate) -> (Na
     (due, steps)
 }
 
-/// Sum of monthly equivalents of active bills per category.
-pub fn monthly_total_by_category(bills: &[Bill]) -> std::collections::HashMap<Uuid, Cents> {
+/// Sum of monthly equivalents of active bills per category, for a month
+/// with `paychecks_in_month` paydays (per-paycheck bills scale with it).
+pub fn monthly_total_by_category(
+    bills: &[Bill],
+    paychecks_in_month: u32,
+) -> std::collections::HashMap<Uuid, Cents> {
     let mut out = std::collections::HashMap::new();
     for b in bills.iter().filter(|b| b.status == BillStatus::Active) {
         if let Some(c) = b.category_id {
-            *out.entry(c).or_insert(Cents::ZERO) += b.monthly_equivalent();
+            *out.entry(c).or_insert(Cents::ZERO) += b.monthly_equivalent(paychecks_in_month);
         }
     }
     out
@@ -203,6 +243,7 @@ mod tests {
             name: name.into(),
             amount_cents: Cents::dollars(dollars),
             cadence_months: cadence,
+            per_paycheck: false,
             next_due: d(due),
             category_id: Some(Uuid::new_v4()),
             account_id: None,
@@ -214,9 +255,46 @@ mod tests {
     #[test]
     fn monthly_equivalent_rounds_up() {
         let b = bill("Insurance", 640, 12, "2027-03-15", BillStatus::Active);
-        assert_eq!(b.monthly_equivalent(), Cents(5334));
+        assert_eq!(b.monthly_equivalent(2), Cents(5334));
         assert!(!b.is_monthly());
         assert!(bill("Gym", 45, 1, "2026-11-03", BillStatus::Active).is_monthly());
+    }
+
+    #[test]
+    fn per_paycheck_bills_follow_the_paydays() {
+        // Fridays every two weeks from Oct 2, 2026: Oct 2, 16, 30; Nov 13, 27.
+        let schedule = PaySchedule::Biweekly {
+            anchor: d("2026-10-02"),
+        };
+        let mut giving = bill("Giving", 282, 1, "2026-10-16", BillStatus::Active);
+        giving.per_paycheck = true;
+        assert!(giving.is_monthly());
+        assert_eq!(giving.monthly_equivalent(3), Cents::dollars(846));
+        assert_eq!(giving.monthly_equivalent(2), Cents::dollars(564));
+        assert_eq!(
+            giving.next_occurrence(d("2026-10-16"), &schedule),
+            d("2026-10-30")
+        );
+        // Paid on the 16th: the next due is the 30th. Missed until Nov 20: Nov 27.
+        assert_eq!(
+            giving.catch_up(d("2026-10-30"), &schedule, d("2026-10-17")),
+            (d("2026-10-30"), 0)
+        );
+        assert_eq!(
+            giving.catch_up(d("2026-10-30"), &schedule, d("2026-11-20")),
+            (d("2026-11-27"), 2)
+        );
+        // A monthly bill advances by the calendar as before.
+        let rent = bill("Rent", 1500, 1, "2026-11-01", BillStatus::Active);
+        assert_eq!(
+            rent.next_occurrence(d("2026-11-01"), &schedule),
+            d("2026-12-01")
+        );
+        let c = giving.category_id.unwrap();
+        assert_eq!(
+            monthly_total_by_category(std::slice::from_ref(&giving), 3)[&c],
+            Cents::dollars(846)
+        );
     }
 
     #[test]
@@ -242,7 +320,7 @@ mod tests {
         let mut p = bill("Paused", 99, 1, "2026-10-13", BillStatus::Paused);
         p.category_id = Some(c);
         let bills = vec![a.clone(), b, p];
-        assert_eq!(monthly_total_by_category(&bills)[&c], Cents::dollars(95));
+        assert_eq!(monthly_total_by_category(&bills, 2)[&c], Cents::dollars(95));
         let due = due_before(&bills, d("2026-10-11"), d("2026-10-15"));
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].id, a.id);

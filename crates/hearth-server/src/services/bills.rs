@@ -18,6 +18,7 @@ pub fn to_core(b: &RecurringBill) -> CoreBill {
         name: b.name.clone(),
         amount_cents: b.amount_cents,
         cadence_months: b.cadence_months.max(1) as u32,
+        per_paycheck: b.per_paycheck,
         next_due: b.next_due,
         category_id: b.category_id,
         account_id: b.account_id,
@@ -87,8 +88,11 @@ pub async fn find_by_name(ctx: &Ctx, name: &str) -> Result<Option<RecurringBill>
 pub struct AddBill {
     pub name: String,
     pub amount_cents: Cents,
-    /// 1 = monthly, 3 = quarterly, 12 = yearly. Default 1.
+    /// 1 = monthly, 3 = quarterly, 12 = yearly. Default 1. 0 = every paycheck
+    /// (the same as `per_paycheck`).
     pub cadence_months: Option<i16>,
+    /// Due on every payday of the household pay schedule.
+    pub per_paycheck: Option<bool>,
     pub next_due: NaiveDate,
     pub category_id: Option<Uuid>,
     pub account_id: Option<Uuid>,
@@ -96,41 +100,65 @@ pub struct AddBill {
     pub note: Option<String>,
 }
 
-fn validate_common(name: &str, amount: Cents, cadence: i16) -> Result<()> {
+/// The cadence as stored: `(cadence_months, per_paycheck)`. `cadence_months`
+/// 0 is the API's spelling of per paycheck; a per-paycheck bill keeps
+/// `cadence_months` 1 so the column check holds.
+fn cadence_of(cadence_months: Option<i16>, per_paycheck: Option<bool>) -> Result<(i16, bool)> {
+    let per_paycheck = per_paycheck.unwrap_or(false) || cadence_months == Some(0);
+    let cadence = match cadence_months {
+        Some(0) | None => 1,
+        Some(n) if n < 0 => return Err(invalid("cadence_months must be ≥ 1 (0 = every paycheck)")),
+        Some(n) => n,
+    };
+    Ok((cadence, per_paycheck))
+}
+
+fn validate_common(name: &str, amount: Cents) -> Result<()> {
     if name.trim().is_empty() {
         return Err(invalid("name is required"));
     }
     if amount.0 < 0 {
         return Err(invalid("amount_cents must be ≥ 0"));
     }
-    if cadence < 1 {
-        return Err(invalid("cadence_months must be ≥ 1"));
-    }
     Ok(())
 }
 
+/// A per-paycheck bill is due on paydays: the first payday on or after `due`.
+async fn snap_to_payday(ctx: &Ctx, due: NaiveDate) -> Result<NaiveDate> {
+    let settings = super::settings::load(ctx).await?;
+    Ok(settings
+        .pay_schedule
+        .next_payday(due.pred_opt().unwrap_or(due)))
+}
+
 pub async fn add(ctx: &Ctx, actor: &Actor, a: AddBill) -> Result<RecurringBill> {
-    let cadence = a.cadence_months.unwrap_or(1);
-    validate_common(&a.name, a.amount_cents, cadence)?;
+    validate_common(&a.name, a.amount_cents)?;
+    let (cadence, per_paycheck) = cadence_of(a.cadence_months, a.per_paycheck)?;
     if let Some(c) = a.category_id {
         super::budget::get_category(ctx, c).await?;
     }
     if let Some(acct) = a.account_id {
         super::accounts::get(ctx, acct).await?;
     }
+    let next_due = if per_paycheck {
+        snap_to_payday(ctx, a.next_due).await?
+    } else {
+        a.next_due
+    };
     let b = sqlx::query_as::<_, RecurringBill>(
-        "insert into recurring_bills (household_id, name, amount_cents, cadence_months, next_due, category_id, account_id, match_pattern, note)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning *",
+        "insert into recurring_bills (household_id, name, amount_cents, cadence_months, next_due, category_id, account_id, match_pattern, note, per_paycheck)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning *",
     )
     .bind(ctx.household_id)
     .bind(a.name.trim())
     .bind(a.amount_cents)
     .bind(cadence)
-    .bind(a.next_due)
+    .bind(next_due)
     .bind(a.category_id)
     .bind(a.account_id)
     .bind(a.match_pattern.as_deref().map(str::trim).filter(|s| !s.is_empty()))
     .bind(a.note.unwrap_or_default())
+    .bind(per_paycheck)
     .fetch_one(&ctx.pool)
     .await?;
     super::audit::record(
@@ -151,7 +179,9 @@ pub async fn add(ctx: &Ctx, actor: &Actor, a: AddBill) -> Result<RecurringBill> 
 pub struct UpdateBill {
     pub name: Option<String>,
     pub amount_cents: Option<Cents>,
+    /// 0 = every paycheck.
     pub cadence_months: Option<i16>,
+    pub per_paycheck: Option<bool>,
     pub next_due: Option<NaiveDate>,
     pub category_id: Option<Uuid>,
     pub account_id: Option<Uuid>,
@@ -165,29 +195,44 @@ pub async fn update(ctx: &Ctx, actor: &Actor, id: Uuid, u: UpdateBill) -> Result
     validate_common(
         u.name.as_deref().unwrap_or(&before.name),
         u.amount_cents.unwrap_or(before.amount_cents),
-        u.cadence_months.unwrap_or(before.cadence_months),
     )?;
+    // Cadence: untouched unless given; `cadence_months` ≥ 1 also turns per
+    // paycheck off, 0 or `per_paycheck` turns it on.
+    let (cadence, per_paycheck) = match (u.cadence_months, u.per_paycheck) {
+        (None, p) => (None, p),
+        (Some(c), p) => {
+            let (cadence, per) = cadence_of(Some(c), p)?;
+            (Some(cadence), Some(per))
+        }
+    };
     if let Some(c) = u.category_id {
         super::budget::get_category(ctx, c).await?;
     }
+    let next_due = match (per_paycheck.unwrap_or(before.per_paycheck), u.next_due) {
+        (true, Some(d)) => Some(snap_to_payday(ctx, d).await?),
+        (true, None) if !before.per_paycheck => Some(snap_to_payday(ctx, before.next_due).await?),
+        (_, d) => d,
+    };
     let after = sqlx::query_as::<_, RecurringBill>(
         "update recurring_bills set name = coalesce($3, name), amount_cents = coalesce($4, amount_cents),
            cadence_months = coalesce($5, cadence_months), next_due = coalesce($6, next_due),
            category_id = coalesce($7, category_id), account_id = coalesce($8, account_id),
-           match_pattern = coalesce($9, match_pattern), note = coalesce($10, note), status = coalesce($11, status), updated_at = now()
+           match_pattern = coalesce($9, match_pattern), note = coalesce($10, note), status = coalesce($11, status),
+           per_paycheck = coalesce($12, per_paycheck), updated_at = now()
          where household_id = $1 and id = $2 returning *",
     )
     .bind(ctx.household_id)
     .bind(id)
     .bind(u.name.as_deref().map(str::trim))
     .bind(u.amount_cents)
-    .bind(u.cadence_months)
-    .bind(u.next_due)
+    .bind(cadence)
+    .bind(next_due)
     .bind(u.category_id)
     .bind(u.account_id)
     .bind(u.match_pattern.as_deref().map(str::trim))
     .bind(&u.note)
     .bind(u.status)
+    .bind(per_paycheck)
     .fetch_one(&ctx.pool)
     .await?;
     super::audit::record(
@@ -301,11 +346,20 @@ pub async fn splits(ctx: &Ctx, id: Uuid) -> Result<Vec<BillSplit>> {
     )
 }
 
-/// Monthly-equivalent total of active bills per category (splits honored).
+/// Paydays in the current month under the household schedule: what a
+/// per-paycheck bill costs this month is its amount times this.
+pub async fn paychecks_this_month(ctx: &Ctx) -> Result<u32> {
+    let settings = super::settings::load(ctx).await?;
+    Ok(settings.pay_schedule.paydays_in_month(ctx.month()).len() as u32)
+}
+
+/// Monthly-equivalent total of active bills per category for the current
+/// month (splits honored).
 pub async fn monthly_totals_by_category(ctx: &Ctx) -> Result<HashMap<Uuid, Cents>> {
     let bills = all(ctx).await?;
+    let n = paychecks_this_month(ctx).await?;
     let core_bills: Vec<CoreBill> = bills.iter().map(to_core).collect();
-    let mut totals = core::monthly_total_by_category(&core_bills);
+    let mut totals = core::monthly_total_by_category(&core_bills, n);
     // Splits: move the bill's amount from its category to the split categories.
     let split_rows = sqlx::query_as::<_, BillSplit>(
         "select s.* from bill_splits s join recurring_bills b on b.id = s.bill_id where b.household_id = $1 and b.status = 'active'",
@@ -315,13 +369,17 @@ pub async fn monthly_totals_by_category(ctx: &Ctx) -> Result<HashMap<Uuid, Cents
     .await?;
     for s in split_rows {
         if let Some(b) = bills.iter().find(|b| b.id == s.bill_id) {
-            let cadence = b.cadence_months.max(1) as i64;
+            let share = if b.per_paycheck {
+                Cents(s.amount_cents.0 * n as i64)
+            } else {
+                s.amount_cents.div_ceil(b.cadence_months.max(1) as i64)
+            };
             if let Some(c) = b.category_id
                 && let Some(t) = totals.get_mut(&c)
             {
-                *t -= s.amount_cents.div_ceil(cadence);
+                *t -= share;
             }
-            *totals.entry(s.category_id).or_insert(Cents::ZERO) += s.amount_cents.div_ceil(cadence);
+            *totals.entry(s.category_id).or_insert(Cents::ZERO) += share;
         }
     }
     Ok(totals)
@@ -339,9 +397,11 @@ pub async fn record_match(
     let next = if b.status == BillStatus::Canceled {
         b.next_due
     } else {
-        let (due, _) = core::catch_up(
-            core::advance(b.next_due, b.cadence_months.max(1) as u32),
-            b.cadence_months.max(1) as u32,
+        let schedule = super::settings::load(ctx).await?.pay_schedule;
+        let core_bill = to_core(&b);
+        let (due, _) = core_bill.catch_up(
+            core_bill.next_occurrence(b.next_due, &schedule),
+            &schedule,
             txn_date.succ_opt().unwrap_or(txn_date),
         );
         due
@@ -362,7 +422,7 @@ pub async fn record_match(
 pub fn sinking_items(bills: &[RecurringBill]) -> Vec<hearth_core::sinking::SinkingItemInput> {
     bills
         .iter()
-        .filter(|b| b.status == BillStatus::Active && b.cadence_months > 1)
+        .filter(|b| b.status == BillStatus::Active && b.cadence_months > 1 && !b.per_paycheck)
         .map(|b| hearth_core::sinking::SinkingItemInput {
             id: b.id,
             name: b.name.clone(),
@@ -389,6 +449,7 @@ pub struct BillView {
 
 pub async fn views(ctx: &Ctx, q: &ListQuery) -> Result<Vec<BillView>> {
     let bills = list(ctx, q).await?;
+    let n = paychecks_this_month(ctx).await?;
     let cats = super::budget::list_categories(ctx, true).await?;
     let all_splits = sqlx::query_as::<_, BillSplit>(
         "select s.* from bill_splits s join recurring_bills b on b.id = s.bill_id where b.household_id = $1",
@@ -399,7 +460,7 @@ pub async fn views(ctx: &Ctx, q: &ListQuery) -> Result<Vec<BillView>> {
     Ok(bills
         .into_iter()
         .map(|b| BillView {
-            monthly_equivalent_cents: to_core(&b).monthly_equivalent(),
+            monthly_equivalent_cents: to_core(&b).monthly_equivalent(n),
             category_name: b
                 .category_id
                 .and_then(|c| cats.iter().find(|x| x.id == c))

@@ -121,11 +121,16 @@ month's plan is unchanged; the audit log records it as
 ### Recurring bills
 
 **recurring_bills** — `name`, `amount_cents`, `cadence_months` (1 monthly,
-3, 6, 12…), `next_due` (date), `category_id`, `account_id` (the card or
-account it hits), `match_pattern` (substring on the normalized description;
-null = name), `status`, `note`, `last_matched_transaction`,
-`last_matched_at`. Monthly bills feed category bill totals and the
-bills-due-before-payday number; non-monthly bills feed the sinking fund.
+3, 6, 12…), `per_paycheck` (due on every payday of the household pay
+schedule, so three times in a three-paycheck month; `cadence_months` is
+then ignored and `next_due` always sits on a payday; the API also spells it
+`cadence_months: 0`), `next_due` (date), `category_id`, `account_id` (the
+card or account it hits), `match_pattern` (substring on the normalized
+description; null = name), `status`, `note`, `last_matched_transaction`,
+`last_matched_at`. Monthly and per-paycheck bills feed category bill
+totals (a per-paycheck bill at `amount × paydays in the month`) and the
+bills-due-before-payday number; non-monthly bills feed the sinking fund. A
+match advances `next_due` one cadence, or to the next payday.
 
 **bill_splits** — `bill_id`, `category_id`, `amount_cents`. Present only
 when a person asked for a split; otherwise the whole amount goes to the
@@ -144,7 +149,10 @@ reviewed with no category), `set_note`, `is_active`, `hit_count`,
 
 **planned_items** — `date`, `item`, `amount_cents` (unsigned),
 `category_id`, `status`, `decided_by` (free text so the assistant can be
-named), `note`, `matched_transaction_id`.
+named), `note`, `matched_transaction_id`, `paid_outside_feed`. `done`
+needs a matched transaction or `paid_outside_feed` (cash, another
+account); otherwise the item stays planned, overdue, and on the cash
+projection until the charge posts.
 
 ### Transactions
 

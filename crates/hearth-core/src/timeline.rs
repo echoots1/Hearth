@@ -1,7 +1,8 @@
-//! The cash timeline: every expected paycheck, bill, planned one-off and the
-//! everyday drain from today to a horizon, in date order, with the running
-//! balance after each. The low point before the next payday is the first
-//! stretch of it; this is the same arithmetic carried further out.
+//! The cash timeline: every expected paycheck, bill, planned one-off, the
+//! everyday drain and the rest of each spend category's plan from today to
+//! a horizon, in date order, with the running balance after each. The low
+//! point before the next payday is the first stretch of it; this is the same
+//! arithmetic carried further out.
 
 use std::collections::HashMap;
 
@@ -9,6 +10,7 @@ use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::balance::plan_share;
 use crate::bills::advance;
 use crate::budget::{PlanPhase, Sign, effective_plan, monthly_plan, paychecks_in_month};
 use crate::calendar::Month;
@@ -39,6 +41,8 @@ pub struct BillForTimeline {
     pub name: String,
     pub next_due: NaiveDate,
     pub cadence_months: u32,
+    /// Due on every payday of the household schedule.
+    pub per_paycheck: bool,
     pub amount_cents: Cents,
     pub category_id: Option<Uuid>,
 }
@@ -61,12 +65,15 @@ pub enum TimelineKind {
     Planned,
     /// Everyday-category spending at its pace over a run of days.
     Everyday,
+    /// The rest of another spend category's plan (above its bills and what
+    /// is spent), spread over the rest of the month.
+    Plan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineEntry {
     /// When it lands. An overdue bill or one-off is dated today; an everyday
-    /// run is dated its last day.
+    /// or plan run is dated its last day.
     pub date: NaiveDate,
     pub kind: TimelineKind,
     pub label: String,
@@ -77,7 +84,7 @@ pub struct TimelineEntry {
     pub overdue: bool,
     /// The original due date of an overdue item.
     pub due_date: Option<NaiveDate>,
-    /// Days an everyday run covers.
+    /// Days an everyday or plan run covers.
     pub days: Option<i64>,
     pub bill_id: Option<Uuid>,
     pub planned_item_id: Option<Uuid>,
@@ -99,6 +106,8 @@ pub struct Timeline {
     pub bills_cents: Cents,
     pub planned_cents: Cents,
     pub everyday_cents: Cents,
+    /// The remaining plan of non-everyday spend categories in the window.
+    pub plan_cents: Cents,
     /// Paydays in the window (strictly after today): the household
     /// schedule's, plus those of income categories paid on their own.
     pub paydays: Vec<NaiveDate>,
@@ -127,7 +136,58 @@ fn kind_order(k: TimelineKind) -> u8 {
         TimelineKind::Bill => 1,
         TimelineKind::Planned => 2,
         TimelineKind::Everyday => 3,
+        TimelineKind::Plan => 4,
     }
+}
+
+/// Monthly-equivalent total of the active bills in a category for a month
+/// with `paychecks_in_month` paydays.
+fn bills_total_for(category: Uuid, bills: &[BillForTimeline], paychecks_in_month: u32) -> Cents {
+    bills
+        .iter()
+        .filter(|b| b.category_id == Some(category))
+        .map(|b| {
+            if b.per_paycheck {
+                Cents(b.amount_cents.0 * paychecks_in_month as i64)
+            } else {
+                b.amount_cents.div_ceil(b.cadence_months.max(1) as i64)
+            }
+        })
+        .sum()
+}
+
+/// What a non-everyday spend category drains on a date: this month, the
+/// plan above its bills and what is spent, spread evenly over the days from
+/// today to month end; a later month, that month's plan above its bills over
+/// all its days. Day amounts are differences of the running share, so a run
+/// of days sums to exactly [`plan_share`] of the whole.
+fn plan_drain_on(
+    c: &CategoryForTimeline,
+    date: NaiveDate,
+    today: NaiveDate,
+    household_paychecks: u32,
+    bills: &[BillForTimeline],
+) -> Cents {
+    let month = Month::of(date);
+    let n = paychecks_in_month(c.pay_schedule.as_ref(), month, household_paychecks);
+    let plan = monthly_plan(&c.phases, month, c.plan_per_paycheck, n);
+    let bills_total = bills_total_for(c.id, bills, household_paychecks);
+    let (remaining, day, days_left) = if month == Month::of(today) {
+        let remaining = (plan - bills_total - c.activity_cents).floor_zero();
+        let day = (date.day() - today.day() + 1) as i64;
+        (
+            remaining,
+            day,
+            (month.days_in_month() - today.day() + 1) as i64,
+        )
+    } else {
+        (
+            (plan - bills_total).floor_zero(),
+            date.day() as i64,
+            month.days_in_month() as i64,
+        )
+    };
+    plan_share(remaining, day, days_left) - plan_share(remaining, day - 1, days_left)
 }
 
 /// Cents per day an everyday category drains on a given date: this month,
@@ -160,11 +220,14 @@ fn everyday_pace(
 /// - Paychecks: each payday strictly after today credits every income
 ///   category whose plan is per paycheck with that month's phase amount; a
 ///   category with its own pay schedule lands on its own paydays.
-/// - Bills: each occurrence of an active bill from `next_due` by its cadence.
-///   A `next_due` before today is overdue and lands today.
+/// - Bills: each occurrence of an active bill from `next_due` by its cadence,
+///   or on every payday for a per-paycheck bill. A `next_due` before today is
+///   overdue and lands today.
 /// - Planned: outstanding one-offs on their date; overdue ones land today.
 /// - Everyday: the drain of everyday spend categories accrues day by day and
 ///   is shown as one row before each dated event and one at the end.
+/// - Plan: every other spend category's remaining plan (see
+///   [`plan_drain_on`]) accrues the same way, one row per category.
 pub fn cash_timeline(
     start_cents: Cents,
     today: NaiveDate,
@@ -241,7 +304,11 @@ pub fn cash_timeline(
                 });
             }
             first = false;
-            due = advance(due, b.cadence_months);
+            due = if b.per_paycheck {
+                schedule.next_payday(due)
+            } else {
+                advance(due, b.cadence_months)
+            };
             steps += 1;
         }
     }
@@ -272,53 +339,106 @@ pub fn cash_timeline(
         .iter()
         .filter(|c| c.sign == Sign::Spend && c.is_everyday)
         .collect();
+    let mut planned_cats: Vec<&CategoryForTimeline> = categories
+        .iter()
+        .filter(|c| c.sign == Sign::Spend && !c.is_everyday)
+        .collect();
+    planned_cats.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut entries: Vec<TimelineEntry> = Vec::with_capacity(events.len() * 2 + 1);
     let mut balance = start_cents;
-    let mut totals = (Cents::ZERO, Cents::ZERO, Cents::ZERO, Cents::ZERO);
+    // income, bills, planned, everyday, plan
+    let mut totals = (
+        Cents::ZERO,
+        Cents::ZERO,
+        Cents::ZERO,
+        Cents::ZERO,
+        Cents::ZERO,
+    );
     let mut low = (start_cents, today);
     let mut cursor = today;
 
-    // Accrue everyday spending for every day in [from, to) as one row.
+    // Accrue the everyday drain and each other category's remaining plan for
+    // every day in [from, to): one everyday row, then one row per category.
     let mut accrue = |from: NaiveDate,
                       to: NaiveDate,
                       balance: &mut Cents,
                       entries: &mut Vec<TimelineEntry>,
                       low: &mut (Cents, NaiveDate),
-                      everyday_total: &mut Cents| {
+                      everyday_total: &mut Cents,
+                      plan_total: &mut Cents| {
         let days = (to - from).num_days();
         if days <= 0 {
             return;
         }
         let mut amt = Cents::ZERO;
+        let mut per_cat: Vec<Cents> = vec![Cents::ZERO; planned_cats.len()];
         let mut d = from;
         while d < to {
+            let month = Month::of(d);
+            let household = *paychecks
+                .entry(month)
+                .or_insert_with(|| schedule.paydays_in_month(month).len() as u32);
             for c in &everyday {
                 amt += everyday_pace(c, d, today, &mut paychecks, schedule);
             }
+            for (i, c) in planned_cats.iter().enumerate() {
+                per_cat[i] += plan_drain_on(c, d, today, household, bills);
+            }
             d = d.succ_opt().expect("date in range");
         }
-        if amt.0 <= 0 {
-            return;
-        }
-        *balance -= amt;
-        *everyday_total += amt;
         let last = to.pred_opt().expect("date in range");
-        entries.push(TimelineEntry {
-            date: last,
-            kind: TimelineKind::Everyday,
-            label: "Everyday spending".into(),
-            amount_cents: -amt,
-            balance_after_cents: *balance,
-            overdue: false,
-            due_date: None,
-            days: Some(days),
-            bill_id: None,
-            planned_item_id: None,
-            category_id: None,
-        });
-        if *balance < low.0 {
-            *low = (*balance, last);
+        let push = |kind: TimelineKind,
+                    label: String,
+                    amt: Cents,
+                    category_id: Option<Uuid>,
+                    total: &mut Cents,
+                    balance: &mut Cents,
+                    entries: &mut Vec<TimelineEntry>,
+                    low: &mut (Cents, NaiveDate)| {
+            if amt.0 <= 0 {
+                return;
+            }
+            *balance -= amt;
+            *total += amt;
+            entries.push(TimelineEntry {
+                date: last,
+                kind,
+                label,
+                amount_cents: -amt,
+                balance_after_cents: *balance,
+                overdue: false,
+                due_date: None,
+                days: Some(days),
+                bill_id: None,
+                planned_item_id: None,
+                category_id,
+            });
+            if *balance < low.0 {
+                *low = (*balance, last);
+            }
+        };
+        push(
+            TimelineKind::Everyday,
+            "Everyday spending".into(),
+            amt,
+            None,
+            everyday_total,
+            balance,
+            entries,
+            low,
+        );
+        for (i, c) in planned_cats.iter().enumerate() {
+            push(
+                TimelineKind::Plan,
+                format!("{} (remaining plan)", c.name),
+                per_cat[i],
+                Some(c.id),
+                plan_total,
+                balance,
+                entries,
+                low,
+            );
         }
     };
 
@@ -332,6 +452,7 @@ pub fn cash_timeline(
                 &mut entries,
                 &mut low,
                 &mut totals.3,
+                &mut totals.4,
             );
             cursor = e.date;
         }
@@ -340,7 +461,7 @@ pub fn cash_timeline(
             TimelineKind::Paycheck => totals.0 += e.amount_cents,
             TimelineKind::Bill => totals.1 -= e.amount_cents,
             TimelineKind::Planned => totals.2 -= e.amount_cents,
-            TimelineKind::Everyday => {}
+            TimelineKind::Everyday | TimelineKind::Plan => {}
         }
         if e.overdue {
             overdue_count += 1;
@@ -369,6 +490,7 @@ pub fn cash_timeline(
         &mut entries,
         &mut low,
         &mut totals.3,
+        &mut totals.4,
     );
 
     let this_month = Month::of(today);
@@ -389,6 +511,7 @@ pub fn cash_timeline(
         bills_cents: totals.1,
         planned_cents: totals.2,
         everyday_cents: totals.3,
+        plan_cents: totals.4,
         paydays,
         overdue_count,
         unscheduled_income_monthly_cents: unscheduled,
@@ -447,8 +570,22 @@ mod tests {
             name: name.into(),
             next_due: d(due),
             cadence_months: cadence,
+            per_paycheck: false,
             amount_cents: Cents::dollars(dollars),
             category_id: None,
+        }
+    }
+
+    fn other(name: &str, plan: i64, spent: i64) -> CategoryForTimeline {
+        CategoryForTimeline {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            sign: Sign::Spend,
+            is_everyday: false,
+            plan_per_paycheck: false,
+            pay_schedule: None,
+            phases: vec![phase("2026-01", plan)],
+            activity_cents: Cents::dollars(spent),
         }
     }
 
@@ -530,9 +667,14 @@ mod tests {
             Cents::dollars(1730 - 30 + 1800)
         );
         // End balance is the sum of the parts.
+        assert_eq!(t.plan_cents, Cents::ZERO);
         assert_eq!(
             t.end_cents,
-            t.start_cents + t.income_cents - t.bills_cents - t.planned_cents - t.everyday_cents
+            t.start_cents + t.income_cents
+                - t.bills_cents
+                - t.planned_cents
+                - t.everyday_cents
+                - t.plan_cents
         );
         assert_eq!(t.entries.last().unwrap().date, d("2026-11-15"));
         assert_eq!(t.entries.last().unwrap().balance_after_cents, t.end_cents);
@@ -590,6 +732,7 @@ mod tests {
                 plan_cents: effective_plan(&c.phases, Month::of(today)),
                 spent_cents: c.activity_cents,
                 is_everyday: c.is_everyday,
+                bills_total_cents: Cents::ZERO,
             })
             .collect();
         let lp_bills: Vec<BillForLowPoint> = bills
@@ -670,6 +813,77 @@ mod tests {
         assert_eq!(t.end_cents, Cents::dollars(370));
         assert_eq!(t.low_cents, Cents::dollars(370));
         assert_eq!(t.low_date, d("2026-11-03"));
+    }
+
+    #[test]
+    fn per_paycheck_bills_and_the_rest_of_a_plan() {
+        let today = d("2026-10-11"); // 21 days left in October
+        let giving = other("Giving", 564, 0);
+        let appointments = other("Appointments", 150, 0);
+        let paid_up = other("Rent", 1500, 1500);
+        let mut calvary = bill("Calvary", "2026-10-16", 282, 1);
+        calvary.per_paycheck = true;
+        calvary.category_id = Some(giving.id);
+        let cats = vec![giving, appointments, paid_up];
+        let t = cash_timeline(
+            Cents::dollars(5000),
+            today,
+            d("2026-11-15"),
+            &biweekly(),
+            &cats,
+            std::slice::from_ref(&calvary),
+            &[],
+        );
+        // The per-paycheck bill lands on every payday in the window.
+        let calvary_dates: Vec<NaiveDate> = t
+            .entries
+            .iter()
+            .filter(|e| e.bill_id == Some(calvary.id))
+            .map(|e| e.date)
+            .collect();
+        assert_eq!(
+            calvary_dates,
+            vec![d("2026-10-16"), d("2026-10-30"), d("2026-11-13")]
+        );
+        assert_eq!(t.bills_cents, Cents::dollars(282 * 3));
+        // Giving's bills (3 × $282 in a three-payday October, 2 × in November)
+        // cover its plan, so nothing of it is spread. Appointments' $150 is
+        // spread over Oct 11–31, then November's $150 over 30 days: 15 of them.
+        let plan_rows: Vec<&TimelineEntry> = t
+            .entries
+            .iter()
+            .filter(|e| e.kind == TimelineKind::Plan)
+            .collect();
+        // Appointments: $150 over Oct 11–31, then 15 of November's 30 days.
+        // Rent: fully spent in October, so only November's 15 days. Giving:
+        // its per-paycheck bill covers the plan in both months.
+        assert!(plan_rows.iter().all(|e| e.days.is_some()));
+        let sum = |label: &str| -> Cents {
+            plan_rows
+                .iter()
+                .filter(|e| e.label == label)
+                .map(|e| -e.amount_cents)
+                .sum()
+        };
+        assert_eq!(
+            sum("Appointments (remaining plan)"),
+            Cents::dollars(150) + Cents(15000 * 15 / 30)
+        );
+        assert_eq!(sum("Rent (remaining plan)"), Cents(150000 * 15 / 30));
+        assert!(!plan_rows.iter().any(|e| e.label.starts_with("Giving")));
+        assert_eq!(
+            t.plan_cents,
+            sum("Appointments (remaining plan)") + sum("Rent (remaining plan)")
+        );
+        assert_eq!(
+            t.end_cents,
+            Cents::dollars(5000) - t.bills_cents - t.plan_cents
+        );
+        let mut bal = t.start_cents;
+        for e in &t.entries {
+            bal += e.amount_cents;
+            assert_eq!(e.balance_after_cents, bal);
+        }
     }
 
     #[test]
