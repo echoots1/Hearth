@@ -64,12 +64,12 @@ async fn main() -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Serve) {
         Command::Tools => unreachable!("handled above"),
         Command::Migrate => {
-            let pool = db::connect(&config.database_url).await?;
+            let pool = db::connect(&config.database).await?;
             db::migrate(&pool).await?;
             tracing::info!("migrations complete");
         }
         Command::Seed { force } => {
-            let pool = db::connect(&config.database_url).await?;
+            let pool = db::connect(&config.database).await?;
             seed::run(config, pool, force).await?;
         }
         Command::Serve => serve(config).await?,
@@ -93,7 +93,7 @@ fn init_tracing() {
 }
 
 async fn serve(config: Config) -> anyhow::Result<()> {
-    let pool = db::connect(&config.database_url).await?;
+    let pool = db::connect(&config.database).await?;
     db::migrate(&pool).await?;
 
     let state = api::AppState::new(config.clone(), pool).await?;

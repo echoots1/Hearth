@@ -62,7 +62,7 @@ API mode.
 
 ```sh
 docker compose up -d db
-cp .env.example .env                 # DATABASE_URL → localhost
+cp .env.example .env                 # set POSTGRES_HOST=localhost (or DATABASE_URL)
 cargo run -p hearth-server           # API on :3000, runs migrations
 npm --prefix web install && npm --prefix web run dev   # UI on :5173
 ```

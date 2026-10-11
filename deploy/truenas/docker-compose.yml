@@ -1,8 +1,12 @@
 # Hearth on TrueNAS SCALE (Apps → Discover Apps → ⋮ → Install via YAML).
 #
 # TrueNAS does not read a .env file, so every setting is written here as a
-# literal. Edit the lines marked CHANGE before installing; everything else
-# can stay. The same file works with plain `docker compose up -d`.
+# literal. Edit the lines marked CHANGE before installing (the URL, the two
+# secrets, the database password, the host port); everything else can stay. The same file works with plain `docker compose up -d`.
+# CHANGE: the database password, written once here and used by both
+# services below. Any characters are fine.
+x-postgres-password: &postgres-password "CHANGE-ME-db-password"
+
 services:
   app:
     image: ghcr.io/echoots1/hearth:main
@@ -19,8 +23,11 @@ services:
       # (`openssl rand -base64 48` in any shell).
       APP_SECRET: "CHANGE-ME-to-a-random-string-of-at-least-32-characters"
       APP_ENCRYPTION_KEY: "CHANGE-ME-to-another-random-string-of-32-characters"
-      # CHANGE: must match POSTGRES_PASSWORD on the db service below.
-      DATABASE_URL: "postgres://hearth:CHANGE-ME-db-password@db:5432/hearth"
+      # The bundled Postgres (the db service below).
+      POSTGRES_HOST: "db"
+      POSTGRES_USER: "hearth"
+      POSTGRES_PASSWORD: *postgres-password
+      POSTGRES_DB: "hearth"
       # true when a reverse proxy (TrueNAS's own, Nginx Proxy Manager, Caddy,
       # Traefik) sits in front of Hearth.
       TRUST_PROXY: "false"
@@ -43,8 +50,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: "hearth"
-      # CHANGE: same value as in DATABASE_URL above.
-      POSTGRES_PASSWORD: "CHANGE-ME-db-password"
+      POSTGRES_PASSWORD: *postgres-password
       POSTGRES_DB: "hearth"
     volumes:
       # A named volume lives in TrueNAS's apps dataset and is snapshotted with
