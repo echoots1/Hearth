@@ -10,6 +10,7 @@ const items: { to: string; label: string; hint: string; icon: IconName }[] = [
   { to: "/more/assistant", label: "Assistant", hint: "Pull or API mode · Backseat / Driver", icon: "sparkle" },
   { to: "/more/notifications", label: "Notifications", hint: "push on this device", icon: "bell" },
   { to: "/more/users", label: "People", hint: "who can sign in", icon: "users" },
+  { to: "/more/server", label: "Server", hint: "public URL, proxy, schedules", icon: "settings" },
   { to: "/more/keys", label: "API keys", hint: "for the Claude connector", icon: "key" },
   { to: "/more/integrations", label: "Integrations", hint: "bank feeds and imports", icon: "plug" },
   { to: "/more/jobs", label: "Jobs", hint: "sync, process, evaluate, notify", icon: "clock" },

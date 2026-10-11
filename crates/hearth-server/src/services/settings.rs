@@ -32,7 +32,7 @@ pub async fn load(ctx: &Ctx) -> Result<Settings> {
             .await?;
     let mut map = serde_json::Map::new();
     for (k, v) in rows {
-        if k != "csv_presets" {
+        if k != "csv_presets" && k != super::server::KEY {
             map.insert(k, v);
         }
     }

@@ -43,14 +43,13 @@ Prebuilt images for `linux/amd64` and `linux/arm64` are published at
 `ghcr.io/echoots1/hearth` on every push to `main`.
 
 ```sh
-cp .env.example .env
-# set APP_SECRET and APP_ENCRYPTION_KEY (openssl rand -base64 48 each),
-# APP_URL (https, behind your proxy), POSTGRES_PASSWORD
+cp .env.example .env     # set POSTGRES_PASSWORD; everything else is set in the app
 scripts/preflight.sh
 docker compose up -d
 ```
 
-Open the app URL; the first visit creates the owner account. To look around
+Open `http://<host>:3000`; the first visit creates the owner account, and
+**More → Server** takes the public URL. To look around
 first, `docker compose exec app hearth seed` loads an obviously fake demo
 household. On TrueNAS SCALE, paste `deploy/truenas/docker-compose.yml` into
 **Apps → Discover Apps → ⋮ → Install via YAML**.

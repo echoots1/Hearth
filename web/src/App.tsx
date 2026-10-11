@@ -18,6 +18,7 @@ import { Audit } from "./screens/more/Audit";
 import { Integrations } from "./screens/more/Integrations";
 import { Jobs } from "./screens/more/Jobs";
 import { Notifications } from "./screens/more/Notifications";
+import { Server } from "./screens/more/Server";
 import { Rules } from "./screens/more/Rules";
 import { SettingsScreen } from "./screens/more/Settings";
 import { Users } from "./screens/more/Users";
@@ -50,6 +51,7 @@ function Gate() {
         <Route path="more/accounts" element={<Accounts />} />
         <Route path="more/rules" element={<Rules />} />
         <Route path="more/settings" element={<SettingsScreen />} />
+        <Route path="more/server" element={<Server />} />
         <Route path="more/assistant" element={<Assistant />} />
         <Route path="more/notifications" element={<Notifications />} />
         <Route path="more/users" element={<Users />} />

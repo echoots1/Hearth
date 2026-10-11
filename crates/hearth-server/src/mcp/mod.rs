@@ -210,6 +210,23 @@ fn unauthorized(message: &str) -> Response {
 
 /// Verify the key and stash it in the request extensions for the handler.
 async fn require_key(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+    // DNS-rebinding guard, against the effective allow-list (the public URL
+    // can change in the app, so this is not fixed at start).
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| req.uri().authority().map(|a| a.to_string()));
+    let runtime = state.runtime();
+    if !host.as_deref().is_some_and(|h| runtime.host_allowed(h)) {
+        tracing::warn!(host = ?host, "mcp: rejected Host header not in the allow-list");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Host header is not in the allow-list; set the public URL (More → Server) or MCP_ALLOWED_HOSTS" })),
+        )
+            .into_response();
+    }
     let token = bearer(&req).or_else(|| path_key(req.uri().path()).map(str::to_string));
     let Some(token) = token else {
         return unauthorized("API key required");
@@ -233,8 +250,8 @@ async fn require_key(State(state): State<AppState>, mut req: Request, next: Next
 
 /// `/mcp` and `/mcp/{key}`, both behind [`require_key`].
 pub fn router(state: AppState) -> Router<AppState> {
-    let config = StreamableHttpServerConfig::default()
-        .with_allowed_hosts(state.config.mcp_allowed_hosts.clone());
+    // Host validation happens in `require_key` with the live allow-list.
+    let config = StreamableHttpServerConfig::default().disable_allowed_hosts();
     let factory_state = state.clone();
     let service: StreamableHttpService<HearthMcp, LocalSessionManager> = StreamableHttpService::new(
         move || {

@@ -18,16 +18,14 @@ pub fn jobs(state: &AppState) -> Vec<Job> {
         Job {
             name: "sync:plaid",
             description: "pull transactions and balances for every linked bank, then process",
-            every: std::time::Duration::from_secs(state.config.jobs.plaid_sync_minutes.max(5) * 60),
+            every: std::time::Duration::from_secs(state.runtime().plaid_sync_minutes * 60),
             handler: |s| Box::pin(sync_plaid(s)),
             gate: Some(|s| Box::pin(plaid_configured(s))),
         },
         Job {
             name: "sync:privacy",
             description: "pull virtual-card charges and declines, then process",
-            every: std::time::Duration::from_secs(
-                state.config.jobs.privacy_sync_minutes.max(2) * 60,
-            ),
+            every: std::time::Duration::from_secs(state.runtime().privacy_sync_minutes * 60),
             handler: |s| Box::pin(sync_privacy(s)),
             gate: Some(|s| Box::pin(privacy_configured(s))),
         },

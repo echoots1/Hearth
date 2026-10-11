@@ -24,6 +24,7 @@ pub mod push;
 pub mod questions;
 pub mod rules;
 pub mod secrets;
+pub mod server;
 pub mod settings;
 pub mod sinking;
 pub mod transactions;

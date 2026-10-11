@@ -12,10 +12,11 @@ mod integrations;
 mod keys;
 mod links;
 mod push;
+mod server;
 mod tools;
 mod users;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::{
     Router,
@@ -30,6 +31,7 @@ use uuid::Uuid;
 
 use crate::auth::ratelimit;
 use crate::services::secrets::Crypto;
+use crate::services::server::Runtime;
 use crate::services::{self, Ctx};
 use crate::{assets, config::Config};
 
@@ -37,10 +39,13 @@ pub use error::ApiError;
 
 #[derive(Clone)]
 pub struct AppState {
+    /// The environment as read at start.
     pub config: Arc<Config>,
     pub pool: PgPool,
     pub household_id: Uuid,
     pub crypto: Option<Crypto>,
+    /// Effective server settings: the app's overrides over the environment.
+    runtime: Arc<RwLock<Arc<Runtime>>>,
 }
 
 impl AppState {
@@ -50,12 +55,34 @@ impl AppState {
             .app_encryption_key
             .as_deref()
             .map(Crypto::from_passphrase);
+        let stored = services::server::load_from(&pool, h.id).await?;
+        let runtime = Runtime::compute(&config, &stored);
         Ok(Self {
             config: Arc::new(config),
             pool,
             household_id: h.id,
             crypto,
+            runtime: Arc::new(RwLock::new(Arc::new(runtime))),
         })
+    }
+
+    /// The effective server settings right now (cheap: an `Arc` clone).
+    pub fn runtime(&self) -> Arc<Runtime> {
+        self.runtime
+            .read()
+            .map(|r| r.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
+    }
+
+    /// Rebuild the effective settings after a save.
+    pub async fn reload_runtime(&self) -> anyhow::Result<Arc<Runtime>> {
+        let stored = services::server::load_from(&pool_ref(self), self.household_id).await?;
+        let next = Arc::new(Runtime::compute(&self.config, &stored));
+        match self.runtime.write() {
+            Ok(mut w) => *w = next.clone(),
+            Err(e) => *e.into_inner() = next.clone(),
+        }
+        Ok(next)
     }
 
     /// A service context for "now", with the household's current timezone.
@@ -75,6 +102,10 @@ impl AppState {
             crypto: self.crypto.clone(),
         })
     }
+}
+
+fn pool_ref(state: &AppState) -> PgPool {
+    state.pool.clone()
 }
 
 pub fn router(state: AppState) -> Router {
@@ -146,6 +177,7 @@ pub fn router(state: AppState) -> Router {
             "/settings/assistant",
             get(users::assistant_settings).post(users::set_assistant_settings),
         )
+        .route("/settings/server", get(server::get).put(server::put))
         .route(
             "/settings/anthropic-key",
             post(users::set_anthropic_key).delete(users::clear_anthropic_key),

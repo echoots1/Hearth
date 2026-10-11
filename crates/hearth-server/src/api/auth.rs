@@ -69,7 +69,7 @@ fn session_cookie(state: &AppState, value: String, max_age: Duration) -> Cookie<
     c.set_http_only(true);
     c.set_same_site(SameSite::Lax);
     c.set_path("/");
-    c.set_secure(state.config.is_https());
+    c.set_secure(state.runtime().is_https());
     c.set_max_age(max_age);
     c
 }

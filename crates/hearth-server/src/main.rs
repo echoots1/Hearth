@@ -106,13 +106,21 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     } else {
         tracing::info!("JOBS_ENABLED=false: no scheduler in this process");
     }
+    let runtime = state.runtime();
     let app = api::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
-    tracing::info!(%addr, app_url = %config.app_url, "hearth listening");
+    tracing::info!(
+        %addr,
+        app_url = %runtime.app_url,
+        trust_proxy = runtime.trust_proxy,
+        app_secret = ?config.app_secret_source,
+        encryption_key = ?config.app_encryption_key_source,
+        "hearth listening"
+    );
 
     axum::serve(
         listener,

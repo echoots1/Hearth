@@ -11,3 +11,5 @@
 # web
 web/node_modules
 web/dist/
+# generated keys for local runs (HEARTH_DATA_DIR default)
+/data

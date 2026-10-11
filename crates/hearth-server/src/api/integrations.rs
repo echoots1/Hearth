@@ -263,7 +263,7 @@ pub async fn test(
         "plaid" => {
             let client = plaid_client(&state, &ctx).await?;
             client
-                .link_token(&u.0.id.to_string(), &state.config.app_url)
+                .link_token(&u.0.id.to_string(), &state.runtime().app_url)
                 .await
                 .map_err(bad)?;
             "Plaid accepted the keys (a Link token was issued).".to_string()
@@ -291,7 +291,7 @@ pub async fn test(
             let msg = ntfy::Message {
                 title: "Hearth test",
                 body: "Notifications from Hearth will arrive here.",
-                url: Some(&state.config.app_url),
+                url: Some(&state.runtime().app_url),
                 priority: 3,
                 tag: Some("fire"),
                 actions: vec![],
@@ -311,7 +311,7 @@ pub async fn test(
 
 Open Hearth: {}
 ",
-                    state.config.app_url
+                    state.runtime().app_url
                 ),
             )
             .await
@@ -340,7 +340,7 @@ pub async fn plaid_link_token(
     let ctx = state.ctx().await?;
     let client = plaid_client(&state, &ctx).await?;
     let token = client
-        .link_token(&u.0.id.to_string(), &state.config.app_url)
+        .link_token(&u.0.id.to_string(), &state.runtime().app_url)
         .await
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     Ok(Json(json!({ "link_token": token })))
