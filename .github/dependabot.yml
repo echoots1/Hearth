@@ -1,3 +1,9 @@
+# Dependabot keeps the lockfiles fresh within what the code is written for.
+# Major bumps (and, for Rust, 0.x minor bumps, which are breaking too) are
+# left to a person: the first automatic run proposed React 19, TypeScript 7,
+# Vite 8 and sha2/base64/p256 API changes in one go, none of which build.
+# Advisories still show under Security → Dependabot alerts whatever is
+# ignored here, and `cargo audit` / `npm audit` catch them in a checkout.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -7,6 +13,9 @@ updates:
     groups:
       rust:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -14,6 +23,9 @@ updates:
     groups:
       web:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -22,3 +34,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Stay on the LTS line; odd-numbered Node releases are short-lived.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
