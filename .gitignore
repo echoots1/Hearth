@@ -1,0 +1,13 @@
+# Rust
+/target
+# env (never commit secrets)
+.env
+.env.*
+!.env.example
+# editors / OS
+.idea
+.vscode
+.DS_Store
+# web
+web/node_modules
+web/dist/

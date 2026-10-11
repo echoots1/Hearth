@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ember: #f59e0b;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-stone-50 text-stone-900 antialiased; }
